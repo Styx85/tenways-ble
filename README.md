@@ -2,14 +2,41 @@
 
 Small experimental Python library and CLI for local BLE access to TENWAYS e-bikes.
 
-The initial implementation is intentionally conservative:
+Read-only by design:
 
 - discovers nearby TENWAYS BLE devices;
-- reads the standard Bluetooth Battery Level characteristic (`0x2A19`);
-- subscribes to the proprietary TENWAYS notification characteristic and prints raw packets;
-- does **not** send proprietary write commands.
+- decodes the proprietary **King Meter** frame protocol (CRC-16/MODBUS, TLV fields) used by the TENWAYS Longtail Duo;
+- reads live telemetry: traction battery, odometer, trip, max/average speed, ride time;
+- reads firmware and serial number;
+- reads the standard Bluetooth Battery Level characteristic (`0x2A19`), which is **not** the traction battery;
+- does **not** send any write, lock, light or configuration commands.
 
-The project was initially tested against a TENWAYS Longtail Duo exposing the local name `Tenways-ble-...`.
+The protocol was reconstructed from an Android HCI capture of the official TENWAYS app; all test vectors are the original captured frames. Live operation against the bike is still being validated.
+
+## Library usage
+
+```python
+import asyncio
+from tenways_ble import TenwaysBike
+
+async def main():
+    async with TenwaysBike("E8:88:6C:31:B3:0D") as bike:
+        status = await bike.read_status()
+        print(status.battery_percent, status.odometer_km)
+
+asyncio.run(main())
+```
+
+`TenwaysBike` also accepts an already connected `BleakClient` (for example from `bleak-retry-connector` in Home Assistant). It then only speaks the protocol and leaves the connection to the caller.
+
+The sans-I/O protocol module `tenways_ble.protocol` builds and parses frames without any Bluetooth dependency.
+
+## Devices
+
+| Device | Advertised name | Notes |
+|---|---|---|
+| Longtail Duo drive | `Longtail Duo` | King Meter service, telemetry source. Standard battery reads ~1 %, not the traction battery. |
+| Separate BLE device | `Tenways-ble-XXXXXX` | HID service, standard battery 100 %, also exposes the King Meter service. Function unconfirmed (remote/control unit?). |
 
 ## Known GATT layout
 
@@ -18,14 +45,48 @@ Standard battery service:
 - Service: `0000180f-0000-1000-8000-00805f9b34fb`
 - Battery Level: `00002a19-0000-1000-8000-00805f9b34fb` (`READ`, `NOTIFY`)
 
-Observed TENWAYS proprietary service:
+King Meter service (`43480001-…` contains `KING METER` in ASCII):
 
 - Service: `43480001-f001-4b49-4e47-204d45544552`
 - Write: `43480002-f001-4b49-4e47-204d45544552` (`WRITE WITHOUT RESPONSE`)
 - Notify: `43480003-f001-4b49-4e47-204d45544552` (`NOTIFY`)
-- Read: `43480004-f001-4b49-4e47-204d45544552` (`READ`)
+- Read: `43480004-f001-4b49-4e47-204d45544552` (`READ`, no useful content observed)
 
-The proprietary protocol is not decoded yet.
+## King Meter protocol
+
+```
+[TYPE] [00] [LEN] [CMD] [PAYLOAD…] [CRC_HI] [CRC_LO] [45]
+```
+
+| Element | Meaning |
+|---|---|
+| TYPE | `0x62` read, `0x63` write |
+| `00` | constant header byte |
+| LEN | length of CMD + PAYLOAD; frame length is LEN + 6 |
+| CRC | CRC-16/MODBUS (`0xA001` reflected, init `0xFFFF`) over TYPE…PAYLOAD, **high byte first** |
+| `45` | end marker |
+
+A read request lists field keys; the reply returns `[key][size][value]` entries, big endian. Replies (54 bytes for status) exceed the default 20-byte notification payload and are reassembled.
+
+Status request (`CMD 0x0B`), as sent by the app: `62 00 0c 0b 06 07 08 09 11 0a 0b 0c 0f 23 4f 84 91 45`
+
+| Key | Size | Meaning | Status |
+|---|---|---|---|
+| `0x06` | 2 | current speed, 0.1 km/h | plausible, 0 while parked |
+| `0x07` | 2 | max speed, 0.1 km/h | matches app |
+| `0x08` | 2 | average speed, 0.1 km/h | matches app |
+| `0x09` | 4 | odometer, 0.1 km | matches app |
+| `0x0A` | 4 | ride time, s | matches app |
+| `0x0B` | 2 | unknown (655 at 68 %; range in 0.1 km?) | open |
+| `0x0C` | 4 | trip, 0.1 km | matches app |
+| `0x0F` | 1 | traction battery, % | plausible |
+| `0x11` | 1 | unknown | open |
+| `0x23` | 2 | unknown | open |
+| `0x4F` | 1 | unknown | open |
+
+Device info request (`CMD 0x04`, keys `04 05 4f 70`): key `0x04` holds three version bytes (`2.20.16` observed; the app shows `1.4.0` elsewhere, so this may be another component), key `0x70` the ASCII serial number.
+
+The app also writes a clock sync (`TYPE 0x63`, `CMD 0x01`, key `0x3C`). This library deliberately does not implement it.
 
 ## Install for development
 
@@ -46,22 +107,34 @@ Scan for likely TENWAYS devices:
 tenways scan
 ```
 
-Read the standard battery percentage:
+Read live telemetry (traction battery, odometer, …):
 
 ```bash
-tenways battery 78:05:41:40:0A:59
+tenways status E8:88:6C:31:B3:0D
+```
+
+Read firmware and serial number:
+
+```bash
+tenways device-info E8:88:6C:31:B3:0D
+```
+
+Read the standard BLE battery percentage (not the traction battery):
+
+```bash
+tenways battery E8:88:6C:31:B3:0D
 ```
 
 Show basic GATT information and battery level:
 
 ```bash
-tenways info 78:05:41:40:0A:59
+tenways info E8:88:6C:31:B3:0D
 ```
 
 Subscribe to the proprietary notification characteristic:
 
 ```bash
-tenways listen 78:05:41:40:0A:59
+tenways listen E8:88:6C:31:B3:0D
 ```
 
 Stop with `Ctrl+C`.
@@ -85,3 +158,17 @@ This does **not** passively capture a BLE connection between an Android phone an
 ## License
 
 MIT
+
+Never publish a raw phone HCI log; it contains traffic and identifiers of other devices.
+
+## Releasing
+
+Releases are published to PyPI by GitHub Actions via trusted publishing when a `v*` tag is pushed. The tag must match `__version__`.
+
+## Acknowledgements / Credits
+
+Based on and inspired by [stein155/cgo600-bridge](https://github.com/stein155/cgo600-bridge), which provided valuable groundwork for understanding the proprietary TENWAYS telemetry protocol and its integration with Home Assistant.
+
+Many thanks to the original author and contributors.
+
+The Longtail Duo implementation was developed using independently captured Bluetooth HCI traffic from the official TENWAYS app. It uses the King Meter BLE transport rather than the Nordic UART Service used by the CGO600 bridge.

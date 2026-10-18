@@ -20,6 +20,12 @@ def _parser() -> argparse.ArgumentParser:
     info = sub.add_parser("info", help="Show device name, battery and services")
     info.add_argument("address")
 
+    status = sub.add_parser("status", help="Read live telemetry (King Meter command 0x0B)")
+    status.add_argument("address")
+
+    device_info = sub.add_parser("device-info", help="Read firmware and serial number")
+    device_info.add_argument("address")
+
     listen = sub.add_parser("listen", help="Subscribe to raw TENWAYS notifications")
     listen.add_argument("address")
 
@@ -53,6 +59,28 @@ async def _info(address: str) -> int:
     print("Services:")
     for uuid in info.services:
         print(f"  {uuid}")
+    return 0
+
+
+async def _status(address: str) -> int:
+    async with TenwaysBike(address) as bike:
+        status = await bike.read_status()
+    print(f"Traction battery: {status.battery_percent} %")
+    print(f"Odometer: {status.odometer_km:.1f} km")
+    print(f"Trip: {status.trip_km:.1f} km")
+    print(f"Max speed: {status.max_speed_kmh:.1f} km/h")
+    print(f"Average speed: {status.average_speed_kmh:.1f} km/h")
+    print(f"Ride time: {status.ride_time_s} s")
+    print(f"Speed (unconfirmed): {status.speed_kmh}")
+    print(f"Unknown 0x0B/0x11/0x23/0x4F: {status.raw_0b} {status.raw_11} {status.raw_23} {status.raw_4f}")
+    return 0
+
+
+async def _device_info(address: str) -> int:
+    async with TenwaysBike(address) as bike:
+        info = await bike.read_device_info()
+    print(f"Firmware: {info.firmware or '<unknown>'}")
+    print(f"Serial: {info.serial or '<unknown>'}")
     return 0
 
 
@@ -93,6 +121,10 @@ async def _amain(args: argparse.Namespace) -> int:
         return await _battery(args.address)
     if args.command == "info":
         return await _info(args.address)
+    if args.command == "status":
+        return await _status(args.address)
+    if args.command == "device-info":
+        return await _device_info(args.address)
     if args.command == "listen":
         return await _listen(args.address)
     raise RuntimeError("Unhandled command")

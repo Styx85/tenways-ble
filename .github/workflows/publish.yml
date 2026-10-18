@@ -1,0 +1,23 @@
+name: Publish to PyPI
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e '.[dev]' build
+      - run: pytest
+      - name: Check tag matches version
+        run: test "v$(python -c 'import tenways_ble; print(tenways_ble.__version__)')" = "$GITHUB_REF_NAME"
+      - run: python -m build
+      - uses: pypa/gh-action-pypi-publish@release/v1
