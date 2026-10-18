@@ -1,3 +1,5 @@
+<p align="center"><img src="https://raw.githubusercontent.com/Styx85/tenways-ble/main/docs/icon.png" alt="" width="160"></p>
+
 # tenways-ble
 
 Small experimental Python library and CLI for local BLE access to TENWAYS e-bikes.
