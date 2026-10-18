@@ -70,14 +70,20 @@ BLE commands.
 
 | Field | Captured | Next test |
 |---|---|---|
-| `0x0B` | 655 | Compare with range shown on display; does it fall while riding? |
-| `0x11` | 0 | Change assist level on the parked bike, read again |
-| `0x23` | 0 | Toggle lights, read again |
+| `0x0B` | 655 | Follows the assist level on the parked bike at 68 %: 655, 60, 54, 50, 45, 43 for levels 0–5. Neither app nor display shows a range. Repeat at a lower battery level: same values mean a level code, lower values a range per level in km |
+| `0x11` | 0 | Light: 0 = off, follows the light switch in Home Assistant. Confirm 1 = on |
+| `0x23` | 0 | Not the light (that is `0x11`); correlate with other display states |
 | `0x4F` | 1 | Correlate with display/power states |
 | `0x06` | 0 | Capture while riding (safely, supervised) to confirm current speed |
 
 These are hypotheses. A key number matching a Bafang CAN code does not imply
 the same meaning in the BLE protocol.
+
+## Standard battery characteristic (`0x2A19`)
+
+Reads 0 % after power-on on the Longtail Duo, then rises by 1 roughly with
+every read while the bike is on and drops back to 0 when it is switched off.
+It looks like a counter (connections or time since power-on), not a battery.
 
 ## Capture procedure
 
