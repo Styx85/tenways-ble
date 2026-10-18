@@ -1,13 +1,26 @@
-from .client import TenwaysBatteryError, TenwaysBike, TenwaysError, scan_tenways
+from .client import (
+    TenwaysBatteryError,
+    TenwaysBike,
+    TenwaysError,
+    TenwaysTimeoutError,
+    TenwaysUnsupportedError,
+    scan_tenways,
+)
 from .models import TenwaysAdvertisement, TenwaysInfo
+from .protocol import TenwaysDeviceInfo, TenwaysProtocolError, TenwaysStatus
 
 __all__ = [
     "TenwaysAdvertisement",
     "TenwaysBatteryError",
     "TenwaysBike",
+    "TenwaysDeviceInfo",
     "TenwaysError",
     "TenwaysInfo",
+    "TenwaysProtocolError",
+    "TenwaysStatus",
+    "TenwaysTimeoutError",
+    "TenwaysUnsupportedError",
     "scan_tenways",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
