@@ -52,6 +52,39 @@ def test_status_reply_decodes():
     assert (status.raw_0b, status.raw_11, status.raw_23, status.raw_4f) == (655, 0, 0, 1)
 
 
+def _status_with(old: str, new: str):
+    payload = parse_frame(STATUS_REPLY).payload.replace(bytes.fromhex(old), bytes.fromhex(new))
+    return decode_status(reframe(protocol.TYPE_READ, protocol.CMD_STATUS, payload))
+
+
+def test_decoded_properties_for_parked_bike():
+    status = decode_status(STATUS_REPLY)
+    assert status.light_on is False
+    # 655 = 0x028F: the app treats it as 0, so there is no range.
+    assert status.remaining_range_km is None
+    assert status.power_w == 0
+
+
+@pytest.mark.parametrize(("hexvalue", "expected"), [("00 3c", 60), ("00 2b", 43), ("00 80", None), ("ff ff", None)])
+def test_remaining_range(hexvalue, expected):
+    assert _status_with("0b 02 02 8f", f"0b 02 {hexvalue}").remaining_range_km == expected
+
+
+def test_light_and_power_values():
+    status = _status_with("11 01 00", "11 01 01")
+    assert status.light_on is True
+    assert _status_with("23 02 00 00", "23 02 00 fa").power_w == 250
+    assert _status_with("23 02 00 00", "23 02 ff ff").power_w is None
+
+
+def test_decoded_properties_without_optional_fields():
+    payload = parse_frame(STATUS_REPLY).payload
+    for chunk in ("0b 02 02 8f", "11 01 00", "23 02 00 00"):
+        payload = payload.replace(bytes.fromhex(chunk), b"")
+    status = decode_status(reframe(protocol.TYPE_READ, protocol.CMD_STATUS, payload))
+    assert (status.light_on, status.remaining_range_km, status.power_w) == (None, None, None)
+
+
 def test_info_reply_decodes():
     info = decode_device_info(INFO_REPLY)
     assert info.firmware == "2.20.16"

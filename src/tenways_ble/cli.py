@@ -72,7 +72,8 @@ async def _status(address: str) -> int:
     print(f"Average speed: {status.average_speed_kmh:.1f} km/h")
     print(f"Ride time: {status.ride_time_s} s")
     print(f"Speed (unconfirmed): {status.speed_kmh}")
-    print(f"Unknown 0x0B/0x11/0x23/0x4F: {status.raw_0b} {status.raw_11} {status.raw_23} {status.raw_4f}")
+    print(f"Light: {status.light_on}  Range: {status.remaining_range_km}  Power: {status.power_w}")
+    print(f"Raw 0x0B/0x11/0x23/0x4F: {status.raw_0b} {status.raw_11} {status.raw_23} {status.raw_4f}")
     return 0
 
 

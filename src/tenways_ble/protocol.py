@@ -171,12 +171,40 @@ class TenwaysStatus:
     trip_km: float
     # Plausible but not yet confirmed while riding.
     speed_kmh: float | None = None
-    # Meaning unknown; exposed raw for further analysis.
+    # Raw values; see the light_on, remaining_range_km and power_w properties.
     raw_0b: int | None = None
     raw_11: int | None = None
     raw_23: int | None = None
     raw_4f: int | None = None
     fields: Mapping[int, bytes] = field(default_factory=dict, repr=False)
+
+    @property
+    def light_on(self) -> bool | None:
+        """Light switch (field 0x11, `lightControl` in the app); 0 = off."""
+        return None if self.raw_11 is None else self.raw_11 != 0
+
+    @property
+    def remaining_range_km(self) -> int | None:
+        """Remaining range (field 0x0B, `remainingRange` in the app).
+
+        The app treats a value with a low byte >= 0x80 (such as 655 = 0x028F,
+        read with assist level 0) as 0, i.e. no range; this returns None then.
+        The unit is not stated in the app; km fits the observed 43-60 at 68 %.
+        """
+        raw = self.fields.get(0x0B)
+        if self.raw_0b is None or raw is None or max(raw) >= 0x80:
+            return None
+        return self.raw_0b
+
+    @property
+    def power_w(self) -> int | None:
+        """Power (field 0x23, `power` in the app); the app ignores values above 3000.
+
+        Probably motor power in W; confirmed only at 0 while parked.
+        """
+        if self.raw_23 is None or self.raw_23 > 3000:
+            return None
+        return self.raw_23
 
 
 @dataclass(frozen=True, slots=True)

@@ -70,9 +70,9 @@ BLE commands.
 
 | Field | Captured | Next test |
 |---|---|---|
-| `0x0B` | 655 | Follows the assist level on the parked bike at 68 %: 655, 60, 54, 50, 45, 43 for levels 0–5. Neither app nor display shows a range. Repeat at a lower battery level: same values mean a level code, lower values a range per level in km |
-| `0x11` | 0 | Light: 0 = off, follows the light switch in Home Assistant. Confirm 1 = on |
-| `0x23` | 0 | Not the light (that is `0x11`); correlate with other display states |
+| `0x0B` | 655 | Remaining range: the app names it `remainingRange` and treats a low byte ≥ 0x80 (655 = 0x028F) as 0. On the parked bike at 68 %: 60, 54, 50, 45, 43 km for levels 1–5, none at level 0. Check the unit and that it falls with the battery |
+| `0x11` | 0 | Light (`lightControl` in the app), 0 = off. Confirm 1 = on |
+| `0x23` | 0 | `power` in the app (≤ 3000 accepted), probably motor power in W. Capture while riding, supervised |
 | `0x4F` | 1 | Correlate with display/power states |
 | `0x06` | 0 | Capture while riding (safely, supervised) to confirm current speed |
 
