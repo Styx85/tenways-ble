@@ -79,11 +79,11 @@ Status request (`CMD 0x0B`), as sent by the app: `62 00 0c 0b 06 07 08 09 11 0a 
 | `0x08` | 2 | average speed, 0.1 km/h | matches app |
 | `0x09` | 4 | odometer, 0.1 km | matches app |
 | `0x0A` | 4 | ride time, s | matches app |
-| `0x0B` | 2 | follows assist level: 655, 60, 54, 50, 45, 43 for levels 0–5 (parked, 68 %); level code or range per level in km? | partly understood |
+| `0x0B` | 2 | remaining range (`remainingRange` in the app), km probable; a low byte ≥ 0x80 (655 at assist level 0) counts as none | follows assist level, 60–43 km for levels 1–5 at 68 % |
 | `0x0C` | 4 | trip, 0.1 km | matches app |
 | `0x0F` | 1 | traction battery, % | plausible |
-| `0x11` | 1 | light, 0 = off (seen in Home Assistant) | plausible |
-| `0x23` | 2 | unknown | open |
+| `0x11` | 1 | light, 0 = off (`lightControl` in the app) | seen in Home Assistant |
+| `0x23` | 2 | power (`power` in the app, values above 3000 ignored), probably motor W | 0 while parked, unconfirmed riding |
 | `0x4F` | 1 | unknown | open |
 
 Device info request (`CMD 0x04`, keys `04 05 4f 70`): key `0x04` holds three version bytes (`2.20.16` observed; the app shows `1.4.0` elsewhere, so this may be another component), key `0x70` the ASCII serial number.
