@@ -79,6 +79,33 @@ BLE commands.
 These are hypotheses. A key number matching a Bafang CAN code does not imply
 the same meaning in the BLE protocol.
 
+## Findings from the app's code (static analysis, version 2.18.0)
+
+Facts only; no app code is reproduced here. The bike's King Meter driver is
+the one the app logs as "800s"; other families it knows are logged as "009",
+"600" and "dm" (not looked at).
+
+Names the app gives the status fields (request `0x0B`):
+
+| Key | App name | Decoding in the app |
+|---|---|---|
+| `0x06` | `spd` | ÷ 10 km/h; values above 75 are replaced by the previous value |
+| `0x07` | `maxSpd` | ÷ 10 km/h |
+| `0x08` | `aveSpd` | ÷ 10 km/h |
+| `0x09` | `tripDistance` | ÷ 10; jumps of 2 km or more (5 km for some models) and falls of more than 10 km between updates are discarded |
+| `0x0A` | `tripDuration` | seconds |
+| `0x0B` | `remainingRange` | integer; a byte ≥ 0x80 counts as 0 |
+| `0x0C` | `totalRange` | stored as the device's total distance, shown as odometer |
+| `0x0F` | `battery` | % |
+| `0x11` | `lightControl` | light |
+| `0x23` | `power` | values above 3000 are ignored |
+| `0x4F` | `whetherUnlock` | state flag |
+
+- **Odometer and trip were swapped** in this library before: `0x0C` is the odometer and `0x09` the trip. The capture cannot tell them apart because both hold 1201; they differ once the trip is reset.
+- Info request (`0x04`): `0x04` is `meterFWVer`, `0x05` is `sn`, `0x70` is the serial number we expose. Which of the two serials the app shows is open.
+- The app's data model also has fields this bike may or may not deliver over BLE: `cadence`, `torque`, `voltage`, `current`, `charging`, `standStill`, `lightReserveReached`, `serviceDueDate`, `serviceDueDistance`. The King Meter driver does not parse them from the status request; they probably serve other drivers (Bosch and others), not checked.
+- Statistics (week, month, year) and routes are computed on the TENWAYS server; the route is recorded with the phone's location while the app holds the BLE connection.
+
 ## Standard battery characteristic (`0x2A19`)
 
 Reads 0 % after power-on on the Longtail Duo, then rises by 1 roughly with
