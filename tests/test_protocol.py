@@ -57,6 +57,14 @@ def _status_with(old: str, new: str):
     return decode_status(reframe(protocol.TYPE_READ, protocol.CMD_STATUS, payload))
 
 
+def test_odometer_is_field_0c_and_trip_is_field_09():
+    # The app shows 0x0C as odometer and stores 0x09 as trip distance. The
+    # capture has both at 1201, so build a reply where they differ.
+    status = _status_with("09 04 00 00 04 b1", "09 04 00 00 00 64")
+    assert status.trip_km == 10.0
+    assert status.odometer_km == 120.1
+
+
 def test_decoded_properties_for_parked_bike():
     status = decode_status(STATUS_REPLY)
     assert status.light_on is False
