@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+import inspect
 import logging
 from typing import Any
 
@@ -112,6 +113,7 @@ class TenwaysBike:
         self._pending: tuple[int, asyncio.Future[bytes]] | None = None
         self._protocol_notify = False
         self._raw_callback: NotificationCallback | None = None
+        self._callback_tasks: set[asyncio.Future[Any]] = set()
 
     @property
     def client(self) -> BleakClient:
@@ -132,8 +134,8 @@ class TenwaysBike:
         await self._client.connect()
 
     async def disconnect(self) -> None:
-        self._protocol_notify = False
         self._raw_callback = None
+        await self._stop_notify()
         if not self._owns_client or self._client is None:
             return
         try:
@@ -148,6 +150,18 @@ class TenwaysBike:
 
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         await self.disconnect()
+
+    async def _stop_notify(self) -> None:
+        """Drop our notification subscription, also on a connection we do not own."""
+
+        client = self._client
+        subscribed = self._protocol_notify
+        self._protocol_notify = False
+        if subscribed and client is not None and client.is_connected:
+            try:
+                await client.stop_notify(TENWAYS_NOTIFY_UUID)
+            except Exception as exc:
+                _LOGGER.debug("Could not stop notifications: %s", exc)
 
     def _on_disconnect(self, _client: BleakClient) -> None:
         self._protocol_notify = False
@@ -218,8 +232,9 @@ class TenwaysBike:
             future: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
             self._pending = (cmd, future)
             try:
-                await client.write_gatt_char(TENWAYS_WRITE_UUID, request, response=False)
+                # The timeout covers the write too: a stalled write must not hold the lock.
                 async with asyncio.timeout(self.response_timeout):
+                    await client.write_gatt_char(TENWAYS_WRITE_UUID, request, response=False)
                     return await future
             except TimeoutError as exc:
                 raise TenwaysTimeoutError(f"No reply to command {cmd:#04x}") from exc
@@ -229,9 +244,15 @@ class TenwaysBike:
     def _on_notify(self, _sender: Any, data: bytearray) -> None:
         payload = bytes(data)
         if self._raw_callback is not None:
-            result = self._raw_callback(payload)
-            if asyncio.iscoroutine(result):
-                asyncio.create_task(result)
+            try:
+                result = self._raw_callback(payload)
+                if inspect.isawaitable(result):
+                    task = asyncio.ensure_future(result)
+                    self._callback_tasks.add(task)
+                    task.add_done_callback(self._callback_done)
+            except Exception:
+                # A faulty listener must not stop the reply reaching a pending request.
+                _LOGGER.exception("Raw notification callback failed")
         for raw in self._assembler.feed(payload):
             try:
                 frame = parse_frame(raw)
@@ -245,6 +266,11 @@ class TenwaysBike:
             else:
                 _LOGGER.debug("Unsolicited frame %s", raw.hex(" "))
 
+    def _callback_done(self, task: asyncio.Future[Any]) -> None:
+        self._callback_tasks.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            _LOGGER.error("Raw notification callback failed", exc_info=task.exception())
+
     async def start_raw_notifications(self, callback: NotificationCallback) -> None:
         """Subscribe to the proprietary TENWAYS notification characteristic."""
 
@@ -255,6 +281,7 @@ class TenwaysBike:
             self._protocol_notify = True
 
     async def stop_raw_notifications(self) -> None:
-        self._raw_callback = None
-        self._protocol_notify = False
-        await self.client.stop_notify(TENWAYS_NOTIFY_UUID)
+        # Under the lock, so a request in flight keeps its subscription until it is answered.
+        async with self._lock:
+            self._raw_callback = None
+            await self._stop_notify()

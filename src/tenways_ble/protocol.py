@@ -111,6 +111,14 @@ def parse_tlv(payload: bytes) -> dict[int, bytes]:
     return fields
 
 
+def _crc_ok(frame: bytes) -> bool:
+    try:
+        parse_frame(frame)
+    except TenwaysProtocolError:
+        return False
+    return True
+
+
 class FrameAssembler:
     """Split a notification byte stream into candidate frames.
 
@@ -135,17 +143,36 @@ class FrameAssembler:
                 break
             total = self._buf[2] + OVERHEAD
             if len(self._buf) < total:
+                # Still incomplete, but a false header (e.g. a bogus length byte)
+                # must not hide a valid frame that already arrived behind it.
+                if self._skip_to_valid_frame():
+                    continue
                 break
             candidate = bytes(self._buf[:total])
             if candidate[-1] != END_BYTE:
                 # Wrong length byte: drop this start byte and search again.
                 del self._buf[0]
                 continue
+            if not _crc_ok(candidate) and self._skip_to_valid_frame():
+                # A false candidate that swallows a valid frame.
+                continue
             frames.append(candidate)
             del self._buf[:total]
         if len(self._buf) > self._max_buffer:
             self._buf.clear()
         return frames
+
+    def _skip_to_valid_frame(self) -> bool:
+        """Drop bytes up to the next CRC-valid, complete frame inside the buffer."""
+        buf = self._buf
+        for i in range(1, len(buf) - 2):
+            if buf[i] not in FRAME_TYPES or buf[i + 1] != HEADER_BYTE:
+                continue
+            total = buf[i + 2] + OVERHEAD
+            if i + total <= len(buf) and buf[i + total - 1] == END_BYTE and _crc_ok(bytes(buf[i:i + total])):
+                del buf[:i]
+                return True
+        return False
 
     def _resync(self) -> None:
         start = 0

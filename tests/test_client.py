@@ -127,3 +127,58 @@ async def test_device_without_king_meter_service():
 
 def test_protocol_error_is_value_error():
     assert issubclass(TenwaysProtocolError, ValueError)
+
+
+class StalledWriteClient(FakeClient):
+    async def write_gatt_char(self, uuid, data, response=None):
+        await asyncio.sleep(3600)
+
+
+async def test_stalled_write_times_out_and_releases_lock():
+    bike = TenwaysBike(StalledWriteClient(), response_timeout=0.05)
+    with pytest.raises(TenwaysTimeoutError):
+        await bike.read_status()
+    assert not bike._lock.locked()
+
+
+async def test_failing_raw_callback_does_not_break_requests():
+    def broken(_data):
+        raise RuntimeError("listener bug")
+
+    bike = TenwaysBike(FakeClient())
+    await bike.start_raw_notifications(broken)
+    assert (await bike.read_status()).battery_percent == 68
+
+
+async def test_awaitable_raw_callback_is_scheduled():
+    seen = []
+
+    def callback(data):
+        future = asyncio.get_running_loop().create_future()
+        seen.append(bytes(data))
+        future.set_result(None)
+        return future
+
+    bike = TenwaysBike(FakeClient())
+    await bike.start_raw_notifications(callback)
+    await bike.read_status()
+    assert seen
+
+
+async def test_leaving_context_stops_notifications_on_external_client():
+    fake = FakeClient()
+    async with TenwaysBike(fake) as bike:
+        await bike.read_status()
+        assert fake.notify is not None
+    assert fake.notify is None
+    assert fake.connected  # the caller owns the connection
+
+
+async def test_stop_raw_notifications_waits_for_pending_request():
+    fake = FakeClient()
+    bike = TenwaysBike(fake)
+    await bike.start_raw_notifications(lambda _data: None)
+    status_task = asyncio.create_task(bike.read_status())
+    await asyncio.sleep(0)
+    await bike.stop_raw_notifications()
+    assert (await status_task).battery_percent == 68

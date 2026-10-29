@@ -240,3 +240,26 @@ def test_assembler_buffer_is_bounded():
 def test_build_frame_refuses_unknown_type():
     with pytest.raises(ValueError):
         build_frame(0x30, protocol.CMD_STATUS)
+
+
+def test_assembler_bogus_length_does_not_hide_valid_reply():
+    assembler = FrameAssembler()
+    frames = assembler.feed(bytes.fromhex("62 00 ff") + STATUS_REPLY)
+    assert frames == [STATUS_REPLY]
+
+
+def test_assembler_false_candidate_does_not_swallow_valid_reply():
+    # A bogus header whose length byte makes the candidate end on the reply's final 0x45.
+    length = len(STATUS_REPLY) + 3 - 6
+    data = bytes([0x62, 0x00, length]) + STATUS_REPLY
+    assert data[-1] == 0x45
+    assembler = FrameAssembler()
+    assert assembler.feed(data) == [STATUS_REPLY]
+    assert decode_status(STATUS_REPLY).battery_percent == 68
+
+
+def test_assembler_still_returns_corrupt_frames_for_logging():
+    bad = bytearray(STATUS_REPLY)
+    bad[12] ^= 1
+    assembler = FrameAssembler()
+    assert assembler.feed(bytes(bad)) == [bytes(bad)]
