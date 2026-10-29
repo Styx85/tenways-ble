@@ -23,4 +23,4 @@ __all__ = [
     "scan_tenways",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
