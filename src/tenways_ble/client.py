@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 import inspect
 import logging
 from typing import Any
@@ -19,15 +20,18 @@ from .const import (
 )
 from .models import TenwaysAdvertisement, TenwaysInfo
 from .protocol import (
+    CMD_CLOCK,
     CMD_INFO,
     CMD_STATUS,
     INFO_REQUEST,
     STATUS_REQUEST,
     TYPE_READ,
+    TYPE_WRITE,
     FrameAssembler,
     TenwaysDeviceInfo,
     TenwaysProtocolError,
     TenwaysStatus,
+    build_clock_write,
     decode_device_info,
     decode_status,
     parse_frame,
@@ -110,7 +114,7 @@ class TenwaysBike:
         self._client: BleakClient | None = None if self._owns_client else address_or_device
         self._lock = asyncio.Lock()
         self._assembler = FrameAssembler()
-        self._pending: tuple[int, asyncio.Future[bytes]] | None = None
+        self._pending: tuple[int, int, asyncio.Future[bytes]] | None = None  # frame type, cmd, reply
         self._protocol_notify = False
         self._raw_callback: NotificationCallback | None = None
         self._callback_tasks: set[asyncio.Future[Any]] = set()
@@ -165,8 +169,8 @@ class TenwaysBike:
 
     def _on_disconnect(self, _client: BleakClient) -> None:
         self._protocol_notify = False
-        if self._pending is not None and not self._pending[1].done():
-            self._pending[1].set_exception(TenwaysError("Bike disconnected"))
+        if self._pending is not None and not self._pending[2].done():
+            self._pending[2].set_exception(TenwaysError("Bike disconnected"))
 
     async def battery_level(self) -> int:
         """Read the Bluetooth standard Battery Level characteristic.
@@ -220,7 +224,26 @@ class TenwaysBike:
 
         return decode_device_info(await self._request(INFO_REQUEST, CMD_INFO))
 
-    async def _request(self, request: bytes, cmd: int) -> bytes:
+    async def set_clock(self, moment: datetime | None = None, *, wait_for_reply: bool = True) -> None:
+        """Set the bike's clock (a write; the only one this library sends).
+
+        ``moment`` is sent as wall-clock fields and defaults to the local time of
+        this machine; the bike has no time zone or daylight saving. Raises
+        :class:`TenwaysTimeoutError` if ``wait_for_reply`` and the bike does not
+        acknowledge; the clock may still have been set.
+        """
+
+        request = build_clock_write(moment if moment is not None else datetime.now())
+        if wait_for_reply:
+            await self._request(request, CMD_CLOCK, TYPE_WRITE)
+            return
+        async with self._lock:
+            if not self.supports_protocol():
+                raise TenwaysUnsupportedError("King Meter service not found")
+            async with asyncio.timeout(self.response_timeout):
+                await self.client.write_gatt_char(TENWAYS_WRITE_UUID, request, response=False)
+
+    async def _request(self, request: bytes, cmd: int, frame_type: int = TYPE_READ) -> bytes:
         async with self._lock:
             client = self.client
             if not self.supports_protocol():
@@ -230,7 +253,7 @@ class TenwaysBike:
                 await client.start_notify(TENWAYS_NOTIFY_UUID, self._on_notify)
                 self._protocol_notify = True
             future: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
-            self._pending = (cmd, future)
+            self._pending = (frame_type, cmd, future)
             try:
                 # The timeout covers the write too: a stalled write must not hold the lock.
                 async with asyncio.timeout(self.response_timeout):
@@ -260,9 +283,9 @@ class TenwaysBike:
                 _LOGGER.debug("Dropping invalid frame %s: %s", raw.hex(" "), exc)
                 continue
             pending = self._pending
-            if (pending is not None and not pending[1].done()
-                    and frame.type == TYPE_READ and frame.cmd == pending[0]):
-                pending[1].set_result(raw)
+            if (pending is not None and not pending[2].done()
+                    and frame.type == pending[0] and frame.cmd == pending[1]):
+                pending[2].set_result(raw)
             else:
                 _LOGGER.debug("Unsolicited frame %s", raw.hex(" "))
 

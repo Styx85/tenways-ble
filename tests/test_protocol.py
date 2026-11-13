@@ -263,3 +263,26 @@ def test_assembler_still_returns_corrupt_frames_for_logging():
     bad[12] ^= 1
     assembler = FrameAssembler()
     assert assembler.feed(bytes(bad)) == [bytes(bad)]
+
+
+def test_clock_write_matches_capture():
+    from datetime import datetime
+
+    assert protocol.build_clock_write(datetime(2026, 10, 18, 14, 32, 18)) == CLOCK_WRITE
+
+
+def test_clock_write_uses_wall_clock_fields_only():
+    from datetime import datetime, timezone
+
+    naive = protocol.build_clock_write(datetime(2026, 11, 13, 9, 5, 7))
+    aware = protocol.build_clock_write(datetime(2026, 11, 13, 9, 5, 7, tzinfo=timezone.utc))
+    assert naive == aware
+    assert parse_frame(naive).type == protocol.TYPE_WRITE
+
+
+@pytest.mark.parametrize("year", [1999, 2256])
+def test_clock_write_rejects_years_it_cannot_encode(year):
+    from datetime import datetime
+
+    with pytest.raises(ValueError):
+        protocol.build_clock_write(datetime(year, 1, 1))

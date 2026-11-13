@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 
 TYPE_READ = 0x62
 TYPE_WRITE = 0x63
@@ -30,6 +31,7 @@ MAX_FRAME = 0xFF + OVERHEAD
 
 CMD_INFO = 0x04
 CMD_STATUS = 0x0B
+CMD_CLOCK = 0x01  # write command; the only write this library knows
 
 INFO_KEYS = (0x04, 0x05, 0x4F, 0x70)
 STATUS_KEYS = (0x06, 0x07, 0x08, 0x09, 0x11, 0x0A, 0x0B, 0x0C, 0x0F, 0x23, 0x4F)
@@ -64,6 +66,28 @@ def build_frame(frame_type: int, cmd: int, payload: bytes = b"") -> bytes:
 
 def build_read_request(cmd: int, keys: tuple[int, ...]) -> bytes:
     return build_frame(TYPE_READ, cmd, bytes(keys))
+
+
+KEY_CLOCK = 0x3C
+# First byte of the clock value in the app's frame. Its meaning is unknown (it is
+# not the weekday); it is sent unchanged, as captured.
+CLOCK_FLAGS = 0x02
+
+
+def build_clock_write(moment: datetime) -> bytes:
+    """Frame that sets the bike's clock to the wall-clock fields of ``moment``.
+
+    Layout from a capture of the TENWAYS app: flags, year-2000, month, day,
+    hour, minute, second. Pass local time; the bike has no time zone or
+    daylight saving of its own.
+    """
+    if not 2000 <= moment.year <= 2255:
+        raise ValueError(f"year out of range: {moment.year}")
+    value = bytes((
+        CLOCK_FLAGS, moment.year - 2000, moment.month, moment.day,
+        moment.hour, moment.minute, moment.second,
+    ))
+    return build_frame(TYPE_WRITE, CMD_CLOCK, bytes((KEY_CLOCK, len(value))) + value)
 
 
 STATUS_REQUEST = build_read_request(CMD_STATUS, STATUS_KEYS)

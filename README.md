@@ -11,7 +11,7 @@ Read-only by design:
 - reads live telemetry: traction battery, odometer, trip, max/average speed, ride time;
 - reads firmware and serial number;
 - reads the standard Bluetooth Battery Level characteristic (`0x2A19`), which is **not** the traction battery;
-- does **not** send any write, lock, light or configuration commands.
+- sends no write, lock, light or configuration commands, except the optional, explicit clock sync `set_clock()` (see below).
 
 The protocol was reconstructed from an Android HCI capture of the official TENWAYS app; all test vectors are the original captured frames. Live operation against the bike is still being validated.
 
@@ -88,7 +88,7 @@ Status request (`CMD 0x0B`), as sent by the app: `62 00 0c 0b 06 07 08 09 11 0a 
 
 Device info request (`CMD 0x04`, keys `04 05 4f 70`): key `0x04` holds three version bytes (`2.20.16` observed; the app shows `1.4.0` elsewhere, so this may be another component), key `0x70` the ASCII serial number.
 
-The app also writes a clock sync (`TYPE 0x63`, `CMD 0x01`, key `0x3C`). This library deliberately does not implement it.
+The app also writes a clock sync (`TYPE 0x63`, `CMD 0x01`, key `0x3C`, value: flags `0x02`, year−2000, month, day, hour, minute, second). `TenwaysBike.set_clock()` sends the same frame; it is the **only write** this library implements, it is never sent on its own, and it is **not yet confirmed on a bike**: the frame is checked against the capture byte for byte, but whether the bike takes it as local time, what the flags byte means and what the acknowledgement looks like is open. The bike has no time zone or daylight saving, so it needs setting again after each change.
 
 ## Install for development
 
