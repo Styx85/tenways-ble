@@ -14,7 +14,7 @@ from tenways_ble import (
 )
 from tenways_ble.const import TENWAYS_NOTIFY_UUID, TENWAYS_WRITE_UUID
 
-from .frames import INFO_REPLY, INFO_REQUEST, STATUS_REPLY, STATUS_REQUEST
+from .frames import CLOCK_REPLY, CLOCK_WRITE, INFO_REPLY, INFO_REQUEST, STATUS_REPLY, STATUS_REQUEST
 
 
 class FakeClient(BleakClient):
@@ -182,3 +182,43 @@ async def test_stop_raw_notifications_waits_for_pending_request():
     await asyncio.sleep(0)
     await bike.stop_raw_notifications()
     assert (await status_task).battery_percent == 68
+
+
+async def test_set_clock_writes_the_captured_frame_and_accepts_the_reply():
+    from datetime import datetime
+
+    fake = FakeClient(replies={CLOCK_WRITE: CLOCK_REPLY})
+    await TenwaysBike(fake).set_clock(datetime(2026, 10, 18, 14, 32, 18))
+    assert fake.writes == [CLOCK_WRITE]
+
+
+async def test_set_clock_without_reply_times_out():
+    from datetime import datetime
+
+    bike = TenwaysBike(FakeClient(replies={}), response_timeout=0.05)
+    with pytest.raises(TenwaysTimeoutError):
+        await bike.set_clock(datetime(2026, 10, 18, 14, 32, 18))
+
+
+async def test_set_clock_can_skip_waiting_for_the_reply():
+    from datetime import datetime
+
+    fake = FakeClient(replies={})
+    await TenwaysBike(fake).set_clock(datetime(2026, 10, 18, 14, 32, 18), wait_for_reply=False)
+    assert fake.writes == [CLOCK_WRITE]
+
+
+async def test_set_clock_needs_the_king_meter_service():
+    from datetime import datetime
+
+    with pytest.raises(TenwaysUnsupportedError):
+        await TenwaysBike(FakeClient(has_service=False)).set_clock(datetime(2026, 10, 18, 14, 32, 18))
+
+
+async def test_status_reply_does_not_satisfy_a_clock_write():
+    from datetime import datetime
+
+    # A read reply is not the acknowledgement of a write.
+    fake = FakeClient(replies={CLOCK_WRITE: STATUS_REPLY})
+    with pytest.raises(TenwaysTimeoutError):
+        await TenwaysBike(fake, response_timeout=0.05).set_clock(datetime(2026, 10, 18, 14, 32, 18))
