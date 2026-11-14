@@ -1,9 +1,11 @@
 # Research leads
 
 Leads for decoding more of the Longtail Duo. **Nothing here is confirmed for
-the King Meter BLE interface (`43480001-…`)**; only frames captured from the
-official TENWAYS app count as evidence. Never derive write commands from these
-sources.
+the King Meter BLE interface (`43480001-…`) unless it says so.** Evidence for a
+write is a frame captured from the official TENWAYS app, or a frame the app's
+code would send unchanged to this model (see the app findings below); such a
+frame is tried once, supervised, before it goes into the library. Never derive
+write commands from the other sources here or from guessing keys.
 
 ## Hardware chain (hypothesis)
 
@@ -73,38 +75,102 @@ BLE commands.
 | `0x0B` | 655 | Remaining range: the app names it `remainingRange` and treats a low byte ≥ 0x80 (655 = 0x028F) as 0. On the parked bike at 68 %: 60, 54, 50, 45, 43 km for levels 1–5, none at level 0. Check the unit and that it falls with the battery |
 | `0x11` | 0 | Light (`lightControl` in the app), 0 = off. Confirm 1 = on |
 | `0x23` | 0 | `power` in the app (≤ 3000 accepted), probably motor power in W. Capture while riding, supervised |
-| `0x4F` | 1 | Correlate with display/power states |
+| `0x4F` | 1 | `whetherUnlock` in the app; correlate with display/power states |
 | `0x06` | 0 | Capture while riding (safely, supervised) to confirm current speed |
 
 These are hypotheses. A key number matching a Bafang CAN code does not imply
 the same meaning in the BLE protocol.
 
-## Findings from the app's code (static analysis, version 2.18.0)
+## Findings from the app's code (static analysis)
 
-Facts only; no app code is reproduced here. The bike's King Meter driver is
-the one the app logs as "800s"; other families it knows are logged as "009",
-"600" and "dm" (not looked at).
+Facts only; no app code is reproduced here. Versions 2.18.0 and 2.19.0
+(package `com.ycy.bluetoothbike`), looked at statically, never run.
 
-Names the app gives the status fields (request `0x0B`):
+### Frame layout
 
-| Key | App name | Decoding in the app |
+Every King Meter frame is `[type] 00 [len] [count] [payload] [crc] [crc] 45`.
+Byte 3 is the **number of keys** (keys asked for in a read, TLV entries in a
+reply, `1` in a write), not a command code. A write sets one key:
+`63 00 [len] 01 [key] [size] [value] [crc] [crc] 45`. The app fills in the CRC
+high byte first for every driver except the CGO800 ("800s").
+
+### Driver per model
+
+The app picks a driver from the advertised name:
+
+| Name starts with | Driver | Protocol |
 |---|---|---|
-| `0x06` | `spd` | ÷ 10 km/h; values above 75 are replaced by the previous value |
-| `0x07` | `maxSpd` | ÷ 10 km/h |
-| `0x08` | `aveSpd` | ÷ 10 km/h |
-| `0x09` | `tripDistance` | ÷ 10; jumps of 2 km or more (5 km for some models) and falls of more than 10 km between updates are discarded |
-| `0x0A` | `tripDuration` | seconds |
-| `0x0B` | `remainingRange` | integer; a byte ≥ 0x80 counts as 0 |
-| `0x0C` | `totalRange` | stored as the device's total distance, shown as odometer |
-| `0x0F` | `battery` | % |
-| `0x11` | `lightControl` | light |
-| `0x23` | `power` | values above 3000 are ignored |
-| `0x4F` | `whetherUnlock` | state flag |
+| `Longtail Duo`, `CGO009_D` | own driver ("long tail duo/CGO009_D") on the AGO base | King Meter |
+| `CGO009` (not `L`/`_D`) | "009", AGO base | King Meter |
+| `CGO800` | "800s" | King Meter, CRC low byte first |
+| `AGO AIR`, `Wayfarer_B`, … | "AGO AIR" | King Meter, partly encrypted (`0xD8`/`0xD2` handshake) |
+| `CGO600_D` | own driver | `0x57` frames |
+| `CGO600` | Nordic UART | not King Meter |
+| `smart-helmet-` | helmet | `55 B1 …` frames |
+| anything else (AGO, AGOX, AGOT, CARGO) | "ago", the AGO base | King Meter |
+
+(The earlier note that the Duo uses the "800s" driver was wrong: "800s" is the
+CGO800 driver.)
+
+### Read keys
+
+| Key | App name | Decoding in the app | Asked for on the Duo |
+|---|---|---|---|
+| `0x04` | `meterFWVer` | dotted bytes | info request |
+| `0x05` | `sn` | ASCII | info request |
+| `0x06` | `spd` | ÷ 10 km/h; values above 75 are replaced by the previous value | status |
+| `0x07` | `maxSpd` | ÷ 10 km/h | status |
+| `0x08` | `aveSpd` | ÷ 10 km/h | status |
+| `0x09` | `tripDistance` | ÷ 10; jumps of 2 km or more (5 km for some models) and falls of more than 10 km between updates are discarded | status |
+| `0x0A` | `tripDuration` | seconds | status |
+| `0x0B` | `remainingRange` | integer; a byte ≥ 0x80 counts as 0 | status |
+| `0x0C` | `totalRange` | stored as the device's total distance, shown as odometer | status |
+| `0x0F` | `battery` | % | status |
+| `0x11` | `lightControl` | light | status |
+| `0x12` | `boosterMode` | assist level | no (CGO009 only) |
+| `0x17` | `powerOnPassword` | power-on PIN | separate request |
+| `0x23` | `power` | values above 3000 are ignored | status |
+| `0x40`, `0x41`, `0x42` | `supplierCode`, `productCode`, `subModel` | ASCII | no (info variant of other models) |
+| `0x4F` | `whetherUnlock` | state flag | status and info |
+| `0x50` | `bTLockUnlock` | Bluetooth lock state | no (CGO009) |
+| `0x51` | `meterPasswordPageState` | PIN page state | separate request |
+| `0x55` | `ambientLighting` | integer | no |
+| `0x70` | `iOTSn` | ASCII; the serial number this library exposes | info request |
+| `0x73`, `0x76` | `airPhoneMac`, `airUnlockWhitelist` | hex | no (AGO AIR) |
+| `0x80` | `protocolVersion` | dotted bytes | no (info variant of other models) |
+
+The Duo's status request in the app is byte for byte the one this library
+sends. `0x17` (PIN) is deliberately not read by this library.
+
+### Write keys
+
+| Key | Action | Sent to |
+|---|---|---|
+| `0x2D` = `01` | **clear trip**: `63 00 04 01 2d 01 01 63 e8 45` on the Duo | built into the AGO base and the "800s" driver, so the Duo's driver would send it; the app's screen hides the button for the Duo (a `clearTrip` feature flag that is not in the app, probably from the TENWAYS server) |
+| `0x3C`, 7 bytes | **set clock** (flags `02`, year−2000, month, day, hour, minute, second) | names starting with `AGOX`, `AGOT`, `CARGO` or `Longtail Duo`, about a second after connecting; captured and confirmed on a Duo |
+| `0x24`, 1 byte | navigation arrow | CGO800S and navigation models |
+| `0x25`, 4 bytes | navigation distance | CGO800S and navigation models |
+| `0x4D`, 16 bytes | unlock key | models with a Bluetooth lock |
+| `0x75` | unlock whitelist | AGO AIR |
+| `0x71`, `0x72` | IoT key checksum | IoT models |
+| `0x52` | "full cmd" | AGO AIR |
+| `0xD8` / `0xD2` | encryption handshake | encrypted displays |
+| `57 03 25 01 19 …` | reset speed limit and wheel size | CGO600_D (not King Meter) |
+
+**There is no light command for the bike** in any King Meter driver: the app
+only reads `0x11`. Its "auto light on" belongs to the helmet. A light write on
+`0x11` (as some projects send) is not backed by the app for these displays.
+
+### Other findings
 
 - **Odometer and trip were swapped** in this library before: `0x0C` is the odometer and `0x09` the trip. The capture cannot tell them apart because both hold 1201; they differ once the trip is reset.
-- Info request (`0x04`): `0x04` is `meterFWVer`, `0x05` is `sn`, `0x70` is the serial number we expose. Which of the two serials the app shows is open.
-- The app's data model also has fields this bike may or may not deliver over BLE: `cadence`, `torque`, `voltage`, `current`, `charging`, `standStill`, `lightReserveReached`, `serviceDueDate`, `serviceDueDistance`. The King Meter driver does not parse them from the status request; they probably serve other drivers (Bosch and others), not checked.
-- Statistics (week, month, year) and routes are computed on the TENWAYS server; the route is recorded with the phone's location while the app holds the BLE connection.
+- The app's data model also has fields this bike may or may not deliver over BLE: `cadence`, `torque`, `voltage`, `current`, `charging`, `standStill`, `lightReserveReached`, `serviceDueDate`, `serviceDueDistance`. The King Meter drivers do not parse them; they probably serve other drivers (Bosch and others).
+- Statistics (week, month, year) and routes are computed on the TENWAYS server; the route is recorded with the phone's location while the app holds the BLE connection. The app's trip log is therefore only complete when the app stayed connected for the whole ride.
+
+### Next tests on the Duo
+
+1. Clear trip (`0x2D` = 1), once, supervised: note trip, ride time, average and maximum speed and odometer before and after, and whether the bike acknowledges.
+2. Read `0x12` (assist level), read-only.
 
 ## Standard battery characteristic (`0x2A19`)
 
