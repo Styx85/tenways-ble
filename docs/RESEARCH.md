@@ -127,7 +127,7 @@ CGO800 driver.)
 | `0x0C` | `totalRange` | stored as the device's total distance, shown as odometer | status |
 | `0x0F` | `battery` | % | status |
 | `0x11` | `lightControl` | light | status |
-| `0x12` | `boosterMode` | assist level | no (CGO009 only) |
+| `0x12` | `boosterMode` | assist level | no (CGO009 only); the Duo answers it empty |
 | `0x17` | `powerOnPassword` | power-on PIN | separate request |
 | `0x23` | `power` | values above 3000 are ignored | status |
 | `0x40`, `0x41`, `0x42` | `supplierCode`, `productCode`, `subModel` | ASCII | no (info variant of other models) |
@@ -167,10 +167,11 @@ only reads `0x11`. Its "auto light on" belongs to the helmet. A light write on
 - The app's data model also has fields this bike may or may not deliver over BLE: `cadence`, `torque`, `voltage`, `current`, `charging`, `standStill`, `lightReserveReached`, `serviceDueDate`, `serviceDueDistance`. The King Meter drivers do not parse them; they probably serve other drivers (Bosch and others).
 - Statistics (week, month, year) and routes are computed on the TENWAYS server; the route is recorded with the phone's location while the app holds the BLE connection. The app's trip log is therefore only complete when the app stayed connected for the whole ride.
 
-### Next tests on the Duo
+### Tests on the Duo (2026-11-14, through Home Assistant)
 
-1. Clear trip (`0x2D` = 1), once, supervised: note trip, ride time, average and maximum speed and odometer before and after, and whether the bike acknowledges.
-2. Read `0x12` (assist level), read-only.
+- **Clear trip works.** The bike echoed `63 00 04 01 2d 01 01 63 e8 45`. Before: trip 164.0 km, trip time 42970 s, maximum 44.7, average 13.7 km/h. After: all four 0; odometer 164.0 km and battery unchanged. This also confirms on the bike that `0x09` is the trip and `0x0C` the odometer. `TenwaysBike.reset_trip()` sends this frame.
+- **`0x12` (assist level) is not available** on the Duo: the reply is `62 00 01 01 cc df 45`, a count of 1 with no entry.
+- A key the display does not know (seen once, for `0x12`) gets an empty reply, not silence and not an error.
 
 ## Standard battery characteristic (`0x2A19`)
 

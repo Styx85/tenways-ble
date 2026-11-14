@@ -28,3 +28,6 @@ INFO_REPLY = bytes.fromhex(
 # Clock sync written by the app; used here only as a valid write-type frame.
 CLOCK_WRITE = bytes.fromhex("63 00 0a 01 3c 07 02 1a 0a 12 0e 20 12 ff f3 45")
 CLOCK_REPLY = bytes.fromhex("63 00 09 01 3c 07 02 1a 12 0e 20 12 ee ed 45")
+# Clear trip written to a Longtail Duo on 2026-11-14 and the bike's acknowledgement (an echo).
+CLEAR_TRIP_WRITE = bytes.fromhex("63 00 04 01 2d 01 01 63 e8 45")
+CLEAR_TRIP_REPLY = bytes.fromhex("63 00 04 01 2d 01 01 63 e8 45")

@@ -14,8 +14,9 @@ its reply carries ``count`` TLV entries ``[key][size][value]`` with
 big-endian values, and a write carries one TLV entry (count 1). It is not a
 command code: the status request is 0x0B because it asks for eleven keys.
 
-Read requests and the clock write (:func:`build_clock_write`) are built;
-nothing else is ever generated.
+Read requests and two writes are built: the clock sync
+(:func:`build_clock_write`) and clearing the trip (:data:`CLEAR_TRIP_WRITE`).
+Nothing else is ever generated.
 """
 from __future__ import annotations
 
@@ -103,6 +104,12 @@ def build_clock_write(moment: datetime) -> bytes:
     ))
     return build_frame(TYPE_WRITE, WRITE_COUNT, bytes((KEY_CLOCK, len(value))) + value)
 
+
+KEY_CLEAR_TRIP = 0x2D
+# The app's "clear trip" write: key 0x2D, one byte 0x01. Taken from the app's
+# driver for the Longtail Duo and confirmed on a Duo: trip distance, trip time,
+# maximum and average speed drop to 0, the odometer stays.
+CLEAR_TRIP_WRITE = build_frame(TYPE_WRITE, WRITE_COUNT, bytes((KEY_CLEAR_TRIP, 1, 0x01)))
 
 STATUS_REQUEST = build_read_request(STATUS_KEYS)
 INFO_REQUEST = build_read_request(INFO_KEYS)

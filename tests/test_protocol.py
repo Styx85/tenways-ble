@@ -14,7 +14,7 @@ from tenways_ble.protocol import (
     parse_tlv,
 )
 
-from .frames import CLOCK_REPLY, CLOCK_WRITE, INFO_REPLY, INFO_REQUEST, STATUS_REPLY, STATUS_REQUEST
+from .frames import CLEAR_TRIP_WRITE, CLOCK_REPLY, CLOCK_WRITE, INFO_REPLY, INFO_REQUEST, STATUS_REPLY, STATUS_REQUEST
 
 
 def reframe(frame_type: int, count: int, payload: bytes) -> bytes:
@@ -313,3 +313,9 @@ def test_legacy_build_read_request_form():
     assert protocol.build_read_request(0x0B, protocol.STATUS_KEYS) == protocol.STATUS_REQUEST
     with pytest.raises(ValueError):
         protocol.build_read_request(0x0A, protocol.STATUS_KEYS)
+
+
+def test_clear_trip_write_is_the_app_frame():
+    assert protocol.CLEAR_TRIP_WRITE == CLEAR_TRIP_WRITE
+    frame = parse_frame(CLEAR_TRIP_WRITE)
+    assert (frame.type, frame.count, parse_tlv(frame.payload)) == (protocol.TYPE_WRITE, 1, {0x2D: b"\x01"})

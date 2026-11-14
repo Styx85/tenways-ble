@@ -11,7 +11,7 @@ Read-only by design:
 - reads live telemetry: traction battery, odometer, trip, max/average speed, ride time;
 - reads firmware and serial number;
 - reads the standard Bluetooth Battery Level characteristic (`0x2A19`), which is **not** the traction battery;
-- sends no write, lock, light or configuration commands, except the optional, explicit clock sync `set_clock()` (see below).
+- sends no lock, light or configuration commands; the only writes are two explicit ones the app also makes, the clock sync `set_clock()` and clearing the trip `reset_trip()` (see below).
 
 The protocol was reconstructed from an Android HCI capture of the official TENWAYS app; all test vectors are the original captured frames. Live operation against the bike is still being validated.
 
@@ -89,9 +89,13 @@ Status request (11 keys, so `COUNT 0x0B`), as sent by the app: `62 00 0c 0b 06 0
 
 Device info request (`COUNT 0x04`, keys `04 05 4f 70`): key `0x04` holds three version bytes (`2.20.16` observed; the app shows `1.4.0` elsewhere, so this may be another component), key `0x70` the ASCII serial number.
 
-The app also writes a clock sync (`TYPE 0x63`, `COUNT 0x01`, key `0x3C`, value: flags `0x02`, year−2000, month, day, hour, minute, second). `TenwaysBike.set_clock()` sends the same frame; it is the **only write** this library implements and it is never sent on its own.
+The app also writes a clock sync (`TYPE 0x63`, `COUNT 0x01`, key `0x3C`, value: flags `0x02`, year−2000, month, day, hour, minute, second). `TenwaysBike.set_clock()` sends the same frame; it is never sent on its own.
 
-**Confirmed on a Longtail Duo** (via the Home Assistant integration, November 2026): the bike takes the fields as local wall-clock time; after the write the display changed from summer time to the correct local time to the minute, and nothing else changed. The bike answered with a reply of the same type and key count that passed the length and CRC checks, which is what `set_clock()` waits for. Still open: what the flags byte means (`0x02` is what the app sends and what works) and what the reply's payload contains. The bike has no time zone or daylight saving, so it needs setting again after each change.
+**Confirmed on a Longtail Duo** (via the Home Assistant integration, November 2026): the bike takes the fields as local wall-clock time; after the write the display changed from summer time to the correct local time to the minute, and nothing else changed. The bike answers with a write frame whose payload starts with the key `0x3C`, followed by a shortened echo (its TLV says 7 bytes but carries 6); `set_clock()` waits for a reply of this type, key count and key. Still open: what the flags byte means (`0x02` is what the app sends and what works). The bike has no time zone or daylight saving, so it needs setting again after each change.
+
+Clearing the trip is the app's write `63 00 04 01 2d 01 01 63 e8 45` (key `0x2D`, value `0x01`), which the app's driver for the Longtail Duo has built in although its screen does not offer it for this bike. `TenwaysBike.reset_trip()` sends it, only when called. **Confirmed on a Longtail Duo** (November 2026): the bike echoes the frame as acknowledgement; trip distance (`0x09`), trip time (`0x0A`), maximum (`0x07`) and average speed (`0x08`) drop to 0, the odometer (`0x0C`) stays.
+
+Both writes wait for an acknowledgement that carries the written key (other frames are ignored); pass `wait_for_reply=False` to only send.
 
 ## Install for development
 
@@ -158,7 +162,7 @@ This does **not** passively capture a BLE connection between an Android phone an
 
 ## Safety
 
-`tenways-ble` never writes arbitrary data to the proprietary TENWAYS write characteristic; the only write is the explicit clock sync. Reverse engineering should start from observed traffic rather than guessed commands.
+`tenways-ble` never writes arbitrary data to the proprietary TENWAYS write characteristic; the only writes are the explicit clock sync and clear trip, both taken from the TENWAYS app. Reverse engineering should start from observed traffic rather than guessed commands.
 
 ## License
 
