@@ -57,20 +57,21 @@ King Meter service (`43480001-…` contains `KING METER` in ASCII):
 ## King Meter protocol
 
 ```
-[TYPE] [00] [LEN] [CMD] [PAYLOAD…] [CRC_HI] [CRC_LO] [45]
+[TYPE] [00] [LEN] [COUNT] [PAYLOAD…] [CRC_HI] [CRC_LO] [45]
 ```
 
 | Element | Meaning |
 |---|---|
 | TYPE | `0x62` read, `0x63` write |
 | `00` | constant header byte |
-| LEN | length of CMD + PAYLOAD; frame length is LEN + 6 |
+| LEN | length of COUNT + PAYLOAD; frame length is LEN + 6 |
+| COUNT | number of keys: keys asked for in a read request, `[key][size][value]` entries in a reply, `1` in a write. Not a command code (earlier versions of this library called it `CMD`) |
 | CRC | CRC-16/MODBUS (`0xA001` reflected, init `0xFFFF`) over TYPE…PAYLOAD, **high byte first** |
 | `45` | end marker |
 
 A read request lists field keys; the reply returns `[key][size][value]` entries, big endian. Replies (54 bytes for status) exceed the default 20-byte notification payload and are reassembled.
 
-Status request (`CMD 0x0B`), as sent by the app: `62 00 0c 0b 06 07 08 09 11 0a 0b 0c 0f 23 4f 84 91 45`
+Status request (11 keys, so `COUNT 0x0B`), as sent by the app: `62 00 0c 0b 06 07 08 09 11 0a 0b 0c 0f 23 4f 84 91 45`
 
 | Key | Size | Meaning | Status |
 |---|---|---|---|
@@ -86,9 +87,9 @@ Status request (`CMD 0x0B`), as sent by the app: `62 00 0c 0b 06 07 08 09 11 0a 
 | `0x23` | 2 | power (`power` in the app, values above 3000 ignored), probably motor W | 0 while parked, unconfirmed riding |
 | `0x4F` | 1 | unknown | open |
 
-Device info request (`CMD 0x04`, keys `04 05 4f 70`): key `0x04` holds three version bytes (`2.20.16` observed; the app shows `1.4.0` elsewhere, so this may be another component), key `0x70` the ASCII serial number.
+Device info request (`COUNT 0x04`, keys `04 05 4f 70`): key `0x04` holds three version bytes (`2.20.16` observed; the app shows `1.4.0` elsewhere, so this may be another component), key `0x70` the ASCII serial number.
 
-The app also writes a clock sync (`TYPE 0x63`, `CMD 0x01`, key `0x3C`, value: flags `0x02`, year−2000, month, day, hour, minute, second). `TenwaysBike.set_clock()` sends the same frame; it is the **only write** this library implements, it is never sent on its own, and it is **not yet confirmed on a bike**: the frame is checked against the capture byte for byte, but whether the bike takes it as local time, what the flags byte means and what the acknowledgement looks like is open. The bike has no time zone or daylight saving, so it needs setting again after each change.
+The app also writes a clock sync (`TYPE 0x63`, `COUNT 0x01`, key `0x3C`, value: flags `0x02`, year−2000, month, day, hour, minute, second). `TenwaysBike.set_clock()` sends the same frame; it is the **only write** this library implements, it is never sent on its own, and it is **not yet confirmed on a bike**: the frame is checked against the capture byte for byte, but whether the bike takes it as local time, what the flags byte means and what the acknowledgement looks like is open. The bike has no time zone or daylight saving, so it needs setting again after each change.
 
 ## Install for development
 
@@ -155,7 +156,7 @@ This does **not** passively capture a BLE connection between an Android phone an
 
 ## Safety
 
-`tenways-ble` 0.1.0 never writes arbitrary data to the proprietary TENWAYS write characteristic. Reverse engineering should start from observed traffic rather than guessed commands.
+`tenways-ble` never writes arbitrary data to the proprietary TENWAYS write characteristic; the only write is the explicit clock sync. Reverse engineering should start from observed traffic rather than guessed commands.
 
 ## License
 

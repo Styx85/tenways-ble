@@ -20,9 +20,6 @@ from .const import (
 )
 from .models import TenwaysAdvertisement, TenwaysInfo
 from .protocol import (
-    CMD_CLOCK,
-    CMD_INFO,
-    CMD_STATUS,
     INFO_REQUEST,
     STATUS_REQUEST,
     TYPE_READ,
@@ -97,7 +94,8 @@ class TenwaysBike:
     or an already connected ``BleakClient`` (e.g. from bleak-retry-connector)
     to only speak the protocol over it; the caller then owns the connection.
 
-    Only read requests are sent. Write commands are not implemented.
+    Only read requests are sent, plus the clock write when :meth:`set_clock`
+    is called.
     """
 
     def __init__(
@@ -114,7 +112,7 @@ class TenwaysBike:
         self._client: BleakClient | None = None if self._owns_client else address_or_device
         self._lock = asyncio.Lock()
         self._assembler = FrameAssembler()
-        self._pending: tuple[int, int, asyncio.Future[bytes]] | None = None  # frame type, cmd, reply
+        self._pending: tuple[int, int, asyncio.Future[bytes]] | None = None  # frame type, key count, reply
         self._protocol_notify = False
         self._raw_callback: NotificationCallback | None = None
         self._callback_tasks: set[asyncio.Future[Any]] = set()
@@ -215,14 +213,14 @@ class TenwaysBike:
         )
 
     async def read_status(self) -> TenwaysStatus:
-        """Request and decode live telemetry (command 0x0B)."""
+        """Request and decode live telemetry (status request, eleven keys)."""
 
-        return decode_status(await self._request(STATUS_REQUEST, CMD_STATUS))
+        return decode_status(await self._request(STATUS_REQUEST))
 
     async def read_device_info(self) -> TenwaysDeviceInfo:
-        """Request firmware and serial number (command 0x04)."""
+        """Request firmware and serial number (info request, four keys)."""
 
-        return decode_device_info(await self._request(INFO_REQUEST, CMD_INFO))
+        return decode_device_info(await self._request(INFO_REQUEST))
 
     async def set_clock(self, moment: datetime | None = None, *, wait_for_reply: bool = True) -> None:
         """Set the bike's clock (a write; the only one this library sends).
@@ -235,7 +233,7 @@ class TenwaysBike:
 
         request = build_clock_write(moment if moment is not None else datetime.now())
         if wait_for_reply:
-            await self._request(request, CMD_CLOCK, TYPE_WRITE)
+            await self._request(request, TYPE_WRITE)
             return
         async with self._lock:
             if not self.supports_protocol():
@@ -243,7 +241,11 @@ class TenwaysBike:
             async with asyncio.timeout(self.response_timeout):
                 await self.client.write_gatt_char(TENWAYS_WRITE_UUID, request, response=False)
 
-    async def _request(self, request: bytes, cmd: int, frame_type: int = TYPE_READ) -> bytes:
+    async def _request(self, request: bytes, frame_type: int = TYPE_READ) -> bytes:
+        # The reply has the request's type and key count: one entry per requested
+        # key, or the one entry of a write. Every captured reply carries all the
+        # keys asked for; a reply that omits some would not match and time out.
+        count = request[3]
         async with self._lock:
             client = self.client
             if not self.supports_protocol():
@@ -253,14 +255,16 @@ class TenwaysBike:
                 await client.start_notify(TENWAYS_NOTIFY_UUID, self._on_notify)
                 self._protocol_notify = True
             future: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
-            self._pending = (frame_type, cmd, future)
+            self._pending = (frame_type, count, future)
             try:
                 # The timeout covers the write too: a stalled write must not hold the lock.
                 async with asyncio.timeout(self.response_timeout):
                     await client.write_gatt_char(TENWAYS_WRITE_UUID, request, response=False)
                     return await future
             except TimeoutError as exc:
-                raise TenwaysTimeoutError(f"No reply to command {cmd:#04x}") from exc
+                raise TenwaysTimeoutError(
+                    f"No reply to {'write' if frame_type == TYPE_WRITE else 'read'} request {request[:5].hex(' ')}"
+                ) from exc
             finally:
                 self._pending = None
 
@@ -284,7 +288,7 @@ class TenwaysBike:
                 continue
             pending = self._pending
             if (pending is not None and not pending[2].done()
-                    and frame.type == pending[0] and frame.cmd == pending[1]):
+                    and frame.type == pending[0] and frame.count == pending[1]):
                 pending[2].set_result(raw)
             else:
                 _LOGGER.debug("Unsolicited frame %s", raw.hex(" "))

@@ -20,7 +20,7 @@ def _parser() -> argparse.ArgumentParser:
     info = sub.add_parser("info", help="Show device name, battery and services")
     info.add_argument("address")
 
-    status = sub.add_parser("status", help="Read live telemetry (King Meter command 0x0B)")
+    status = sub.add_parser("status", help="Read live telemetry (King Meter status request)")
     status.add_argument("address")
 
     device_info = sub.add_parser("device-info", help="Read firmware and serial number")

@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 
 from tenways_ble import protocol
@@ -9,14 +11,17 @@ from tenways_ble.protocol import (
     decode_device_info,
     decode_status,
     parse_frame,
+    parse_tlv,
 )
 
 from .frames import CLOCK_REPLY, CLOCK_WRITE, INFO_REPLY, INFO_REQUEST, STATUS_REPLY, STATUS_REQUEST
 
 
-def reframe(frame_type: int, cmd: int, payload: bytes) -> bytes:
+def reframe(frame_type: int, count: int, payload: bytes) -> bytes:
+    # Callers keep the request's count even when they drop entries: the bike has
+    # always answered with every key asked for, so only the payload is varied here.
     """Build a frame with a correct CRC around a modified payload."""
-    return build_frame(frame_type, cmd, payload)
+    return build_frame(frame_type, count, payload)
 
 
 def test_status_request_matches_capture():
@@ -54,7 +59,7 @@ def test_status_reply_decodes():
 
 def _status_with(old: str, new: str):
     payload = parse_frame(STATUS_REPLY).payload.replace(bytes.fromhex(old), bytes.fromhex(new))
-    return decode_status(reframe(protocol.TYPE_READ, protocol.CMD_STATUS, payload))
+    return decode_status(reframe(protocol.TYPE_READ, len(protocol.STATUS_KEYS), payload))
 
 
 def test_odometer_is_field_0c_and_trip_is_field_09():
@@ -89,7 +94,7 @@ def test_decoded_properties_without_optional_fields():
     payload = parse_frame(STATUS_REPLY).payload
     for chunk in ("0b 02 02 8f", "11 01 00", "23 02 00 00"):
         payload = payload.replace(bytes.fromhex(chunk), b"")
-    status = decode_status(reframe(protocol.TYPE_READ, protocol.CMD_STATUS, payload))
+    status = decode_status(reframe(protocol.TYPE_READ, len(protocol.STATUS_KEYS), payload))
     assert (status.light_on, status.remaining_range_km, status.power_w) == (None, None, None)
 
 
@@ -119,7 +124,7 @@ def test_wrong_type_rejected():
 
 
 def test_write_type_not_accepted_as_status():
-    frame = reframe(protocol.TYPE_WRITE, protocol.CMD_STATUS, parse_frame(STATUS_REPLY).payload)
+    frame = reframe(protocol.TYPE_WRITE, len(protocol.STATUS_KEYS), parse_frame(STATUS_REPLY).payload)
     with pytest.raises(TenwaysProtocolError, match="type"):
         decode_status(frame)
 
@@ -146,43 +151,43 @@ def test_missing_end_byte_rejected():
 def test_duplicate_tlv_rejected():
     payload = parse_frame(STATUS_REPLY).payload + bytes.fromhex("0f 01 44")
     with pytest.raises(TenwaysProtocolError, match="duplicate"):
-        decode_status(reframe(protocol.TYPE_READ, protocol.CMD_STATUS, payload))
+        decode_status(reframe(protocol.TYPE_READ, len(protocol.STATUS_KEYS), payload))
 
 
 def test_truncated_tlv_rejected():
     payload = parse_frame(STATUS_REPLY).payload + bytes.fromhex("23 04 00")
     with pytest.raises(TenwaysProtocolError, match="truncated"):
-        decode_status(reframe(protocol.TYPE_READ, protocol.CMD_STATUS, payload))
+        decode_status(reframe(protocol.TYPE_READ, len(protocol.STATUS_KEYS), payload))
 
 
-def test_wrong_command_rejected():
-    with pytest.raises(TenwaysProtocolError, match="command"):
+def test_wrong_key_count_rejected():
+    with pytest.raises(TenwaysProtocolError, match="key count"):
         decode_status(INFO_REPLY)
 
 
 def test_missing_required_field_rejected():
     payload = parse_frame(STATUS_REPLY).payload.replace(bytes.fromhex("0f 01 44"), b"")
     with pytest.raises(TenwaysProtocolError, match="0x0f"):
-        decode_status(reframe(protocol.TYPE_READ, protocol.CMD_STATUS, payload))
+        decode_status(reframe(protocol.TYPE_READ, len(protocol.STATUS_KEYS), payload))
 
 
 def test_malformed_required_field_rejected():
     payload = parse_frame(STATUS_REPLY).payload.replace(bytes.fromhex("0f 01 44"), bytes.fromhex("0f 02 00 44"))
     with pytest.raises(TenwaysProtocolError, match="0x0f"):
-        decode_status(reframe(protocol.TYPE_READ, protocol.CMD_STATUS, payload))
+        decode_status(reframe(protocol.TYPE_READ, len(protocol.STATUS_KEYS), payload))
 
 
 def test_battery_out_of_range_rejected():
     payload = parse_frame(STATUS_REPLY).payload.replace(bytes.fromhex("0f 01 44"), bytes.fromhex("0f 01 65"))
     with pytest.raises(TenwaysProtocolError, match="battery"):
-        decode_status(reframe(protocol.TYPE_READ, protocol.CMD_STATUS, payload))
+        decode_status(reframe(protocol.TYPE_READ, len(protocol.STATUS_KEYS), payload))
 
 
 def test_missing_optional_fields_keep_required_values():
     payload = parse_frame(STATUS_REPLY).payload
     for chunk in ("06 02 00 00", "0b 02 02 8f", "11 01 00", "23 02 00 00", "4f 01 01"):
         payload = payload.replace(bytes.fromhex(chunk), b"")
-    status = decode_status(reframe(protocol.TYPE_READ, protocol.CMD_STATUS, payload))
+    status = decode_status(reframe(protocol.TYPE_READ, len(protocol.STATUS_KEYS), payload))
     assert status.battery_percent == 68
     assert status.odometer_km == 120.1
     assert status.speed_kmh is None
@@ -191,7 +196,7 @@ def test_missing_optional_fields_keep_required_values():
 
 def test_malformed_optional_field_becomes_none():
     payload = parse_frame(STATUS_REPLY).payload.replace(bytes.fromhex("0b 02 02 8f"), bytes.fromhex("0b 01 02"))
-    status = decode_status(reframe(protocol.TYPE_READ, protocol.CMD_STATUS, payload))
+    status = decode_status(reframe(protocol.TYPE_READ, len(protocol.STATUS_KEYS), payload))
     assert status.raw_0b is None
     assert status.battery_percent == 68
 
@@ -239,7 +244,7 @@ def test_assembler_buffer_is_bounded():
 
 def test_build_frame_refuses_unknown_type():
     with pytest.raises(ValueError):
-        build_frame(0x30, protocol.CMD_STATUS)
+        build_frame(0x30, len(protocol.STATUS_KEYS))
 
 
 def test_assembler_bogus_length_does_not_hide_valid_reply():
@@ -286,3 +291,25 @@ def test_clock_write_rejects_years_it_cannot_encode(year):
 
     with pytest.raises(ValueError):
         protocol.build_clock_write(datetime(year, 1, 1))
+
+
+def test_count_byte_is_number_of_keys():
+    # Byte 3 counts keys (requests) or TLV entries (replies, writes); it is no command code.
+    assert protocol.STATUS_REQUEST[3] == len(protocol.STATUS_KEYS) == 0x0B
+    assert protocol.INFO_REQUEST[3] == len(protocol.INFO_KEYS) == 0x04
+    assert parse_frame(STATUS_REPLY).count == len(parse_tlv(parse_frame(STATUS_REPLY).payload))
+    assert parse_frame(INFO_REPLY).count == len(parse_tlv(parse_frame(INFO_REPLY).payload))
+    assert protocol.build_clock_write(datetime(2026, 11, 14, 14, 4, 37))[3] == protocol.WRITE_COUNT == 1
+    # CLOCK_REPLY is left out: its one TLV says size 7 but carries 6 bytes.
+    assert parse_frame(CLOCK_REPLY).count == 1
+
+
+def test_deprecated_command_names_still_work():
+    assert (protocol.CMD_STATUS, protocol.CMD_INFO, protocol.CMD_CLOCK) == (0x0B, 0x04, 0x01)
+    assert parse_frame(STATUS_REPLY).cmd == 0x0B
+
+
+def test_legacy_build_read_request_form():
+    assert protocol.build_read_request(0x0B, protocol.STATUS_KEYS) == protocol.STATUS_REQUEST
+    with pytest.raises(ValueError):
+        protocol.build_read_request(0x0A, protocol.STATUS_KEYS)
