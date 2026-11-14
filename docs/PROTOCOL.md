@@ -35,7 +35,7 @@ King Meter service (`43480001-…` contains `KING METER` in ASCII):
 | `00` | constant header byte |
 | LEN | length of COUNT + PAYLOAD; frame length is LEN + 6 |
 | COUNT | number of keys: keys asked for in a read request, `[key][size][value]` entries in a reply, `1` in a write. Not a command code (earlier versions of this library called it `CMD`) |
-| CRC | CRC-16/MODBUS (`0xA001` reflected, init `0xFFFF`) over TYPE…PAYLOAD, **high byte first** |
+| CRC | CRC-16/MODBUS (`0xA001` reflected, init `0xFFFF`) over TYPE…PAYLOAD, **high byte first** (the app's CGO800 driver sends it low byte first; the library accepts replies in either order) |
 | `45` | end marker |
 
 A read request lists field keys; the reply returns `[key][size][value]` entries, big endian. Replies (54 bytes for status) exceed the default 20-byte notification payload and are reassembled.
@@ -65,3 +65,7 @@ The app also writes a clock sync (`TYPE 0x63`, `COUNT 0x01`, key `0x3C`, value: 
 Clearing the trip is the app's write `63 00 04 01 2d 01 01 63 e8 45` (key `0x2D`, value `0x01`), which the app's driver for the Longtail Duo has built in although its screen does not offer it for this bike. `TenwaysBike.reset_trip()` sends it, only when called. **Confirmed on a Longtail Duo** (November 2026): the bike echoes the frame as acknowledgement; trip distance (`0x09`), trip time (`0x0A`), maximum (`0x07`) and average speed (`0x08`) drop to 0, the odometer (`0x0C`) stays.
 
 Both writes wait for an acknowledgement that carries the written key (other frames are ignored); pass `wait_for_reply=False` to only send.
+
+## Other models
+
+Everything above was captured from and confirmed on a Longtail Duo. For other King Meter models the library uses the app's request key lists and per-model decoding (see [`profiles.py`](../src/tenways_ble/profiles.py) and [RESEARCH.md, driver per model](RESEARCH.md#driver-per-model)); none of them has been tested on a bike yet.
