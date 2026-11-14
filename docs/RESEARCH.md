@@ -96,21 +96,39 @@ high byte first for every driver except the CGO800 ("800s").
 
 ### Driver per model
 
-The app picks a driver from the advertised name:
+The app picks a driver from the advertised name, checked in this order
+(2.19.0; `profiles.profile_for` follows it):
 
-| Name starts with | Driver | Protocol |
-|---|---|---|
-| `Longtail Duo`, `CGO009_D` | own driver ("long tail duo/CGO009_D") on the AGO base | King Meter |
-| `CGO009` (not `L`/`_D`) | "009", AGO base | King Meter |
-| `CGO800` | "800s" | King Meter, CRC low byte first |
-| `AGO AIR`, `Wayfarer_B`, … | "AGO AIR" | King Meter, partly encrypted (`0xD8`/`0xD2` handshake) |
-| `CGO600_D` | own driver | `0x57` frames |
-| `CGO600` | Nordic UART | not King Meter |
-| `smart-helmet-` | helmet | `55 B1 …` frames |
-| anything else (AGO, AGOX, AGOT, CARGO) | "ago", the AGO base | King Meter |
+| Order | Name | Driver | Protocol |
+|---|---|---|---|
+| 1 | starts with `DM` | "DM" | not analysed |
+| 2 | starts with `CGO600`, not `CGO600_D` (`CGO600 Pro`, `CGO600 PLUS`, …) | Nordic UART | not King Meter |
+| 3 | starts with `CGO800` (`CGO800 Plus`, `CGO800S`) | "800s" | King Meter, CRC low byte first |
+| 4 | starts with `CGO009`, not `CGO009L` or `CGO009_D` | "009", AGO base | King Meter |
+| 5 | starts with `Longtail Duo` or `CGO009_D` | own driver ("long tail duo/CGO009_D") on the AGO base | King Meter |
+| 6 | starts with `AGO AIR`, `Wayfarer_B`, `AGOX_D`, `AGOT_D`, `CGO COMPACT_D` or `AGO AIR-BELT_D` | "AGO AIR" | King Meter, partly encrypted (`0xD8`/`0xD2` handshake) |
+| 7 | starts with `CGO600_D` | own driver | `0x57` frames |
+| 8 | contains `smart-helmet-` | helmet | `55 B1 …` frames |
+| 9 | anything else (AGO, AGOX, AGOT, CARGO, `CGO009L`) | "ago", the AGO base | King Meter |
 
 (The earlier note that the Duo uses the "800s" driver was wrong: "800s" is the
 CGO800 driver.)
+
+Request keys per driver (agreeing with tenways-bridge's notes of app 2.18.0):
+
+| Driver | Status request | Info request |
+|---|---|---|
+| Longtail Duo, CGO009_D | `06 07 08 09 11 0A 0B 0C 0F 23 4F` | `04 05 4F 70` |
+| 009 | `06 07 08 09 11 12 0A 0B 0C 0F 23 4F 50` | `04 05 70 4F 50` |
+| 800s | `05 06 07 08 09 0A 0B 0C 0F 11 23` | `04 05` |
+| ago | `05 06 07 08 09 11 0A 0B 0C 0F 23` | `04 05` |
+
+Other per-model details: the CGO800 driver takes the odometer in whole km and
+the firmware as ASCII; the app writes with response only to names starting with
+`AGO AIR`, `CGO600_D`, `Wayfarer_B`, `CGO009_D`, `AGOX_D`, `AGOT_D`,
+`CGO COMPACT_D` or `AGO AIR-BELT_D` (all others without response, as captured
+on the Duo); a CGO800 that answers with `AT+…` text is retried
+with the encrypted session (seen on the CGO800 Plus).
 
 ### Read keys
 

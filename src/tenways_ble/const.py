@@ -10,4 +10,5 @@ TENWAYS_NOTIFY_UUID = "43480003-f001-4b49-4e47-204d45544552"
 TENWAYS_READ_UUID = "43480004-f001-4b49-4e47-204d45544552"
 
 TENWAYS_NAME_PREFIX = "tenways-ble-"
-TENWAYS_NAME_PREFIXES = (TENWAYS_NAME_PREFIX, "longtail duo")
+# Names of King Meter models the library can talk to (see profiles.py), lower case.
+TENWAYS_NAME_PREFIXES = (TENWAYS_NAME_PREFIX, "longtail duo", "cgo009", "cgo800", "ago", "cargo")

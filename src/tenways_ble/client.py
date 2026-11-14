@@ -19,17 +19,17 @@ from .const import (
     TENWAYS_WRITE_UUID,
 )
 from .models import TenwaysAdvertisement, TenwaysInfo
+from .profiles import LONGTAIL_DUO, Profile, profile_for
 from .protocol import (
-    CLEAR_TRIP_WRITE,
-    INFO_REQUEST,
-    STATUS_REQUEST,
     TYPE_READ,
     TYPE_WRITE,
     FrameAssembler,
     TenwaysDeviceInfo,
     TenwaysProtocolError,
     TenwaysStatus,
+    build_clear_trip_write,
     build_clock_write,
+    build_read_request,
     decode_device_info,
     decode_status,
     parse_frame,
@@ -97,6 +97,10 @@ class TenwaysBike:
 
     Only read requests are sent, plus a write when :meth:`set_clock` or
     :meth:`reset_trip` is called.
+
+    ``name`` (the advertised name) picks the model's profile like the TENWAYS
+    app does, see :mod:`tenways_ble.profiles`; ``profile`` sets it directly.
+    Without either, the tested Longtail Duo profile is used.
     """
 
     def __init__(
@@ -105,7 +109,12 @@ class TenwaysBike:
         *,
         timeout: float = 15.0,
         response_timeout: float = 5.0,
+        name: str | None = None,
+        profile: Profile | None = None,
     ) -> None:
+        self.profile = profile or (profile_for(name) if name else LONGTAIL_DUO)
+        # The app writes with response only for the names in profiles.WRITE_WITH_RESPONSE_NAMES.
+        self._write_response = self.profile.write_with_response
         self.timeout = timeout
         self.response_timeout = response_timeout
         self._owns_client = not isinstance(address_or_device, BleakClient)
@@ -214,25 +223,33 @@ class TenwaysBike:
             and services.get_characteristic(TENWAYS_NOTIFY_UUID) is not None
         )
 
-    async def read_status(self) -> TenwaysStatus:
-        """Request and decode live telemetry (status request, eleven keys)."""
+    def _crc_low_first(self) -> bool:
+        return self.profile.crc_low_first
 
-        return decode_status(await self._request(STATUS_REQUEST))
+    async def read_status(self) -> TenwaysStatus:
+        """Request and decode live telemetry (the status request of the model's profile)."""
+
+        request = build_read_request(self.profile.status_keys, crc_low_first=self._crc_low_first())
+        return decode_status(await self._request(request), self.profile)
 
     async def read_device_info(self) -> TenwaysDeviceInfo:
-        """Request firmware and serial number (info request, four keys)."""
+        """Request firmware and serial number (the info request of the model's profile)."""
 
-        return decode_device_info(await self._request(INFO_REQUEST))
+        request = build_read_request(self.profile.info_keys, crc_low_first=self._crc_low_first())
+        return decode_device_info(await self._request(request), self.profile)
 
     async def set_clock(self, moment: datetime | None = None, *, wait_for_reply: bool = True) -> None:
         """Set the bike's clock (a write, sent only when called).
 
+        The app sends this to names starting with AGOX, AGOT, CARGO and Longtail
+        Duo (confirmed on a Longtail Duo); for other models it is untested.
         ``moment`` is sent as wall-clock fields and defaults to the local time of
         this machine; the bike has no time zone or daylight saving. Raises
         :class:`TenwaysTimeoutError` if ``wait_for_reply`` and no acknowledgement
         carrying key 0x3C arrives; the clock may still have been set.
         """
-        await self._write(build_clock_write(moment if moment is not None else datetime.now()), wait_for_reply)
+        moment = moment if moment is not None else datetime.now()
+        await self._write(build_clock_write(moment, crc_low_first=self._crc_low_first()), wait_for_reply)
 
     async def reset_trip(self, *, wait_for_reply: bool = True) -> None:
         """Clear the trip (a write, sent only when called).
@@ -242,17 +259,22 @@ class TenwaysBike:
         :class:`TenwaysTimeoutError` if ``wait_for_reply`` and no acknowledgement
         carrying key 0x2D arrives; the trip may still have been cleared.
         """
-        await self._write(CLEAR_TRIP_WRITE, wait_for_reply)
+        await self._write(build_clear_trip_write(crc_low_first=self._crc_low_first()), wait_for_reply)
+
+    def _check_supported(self) -> None:
+        if not self.profile.supported:
+            raise TenwaysUnsupportedError(f"{self.profile.name} is not supported: {self.profile.reason}")
+        if not self.supports_protocol():
+            raise TenwaysUnsupportedError("King Meter service not found")
 
     async def _write(self, request: bytes, wait_for_reply: bool) -> None:
         if wait_for_reply:
             await self._request(request, TYPE_WRITE)
             return
         async with self._lock:
-            if not self.supports_protocol():
-                raise TenwaysUnsupportedError("King Meter service not found")
+            self._check_supported()
             async with asyncio.timeout(self.response_timeout):
-                await self.client.write_gatt_char(TENWAYS_WRITE_UUID, request, response=False)
+                await self.client.write_gatt_char(TENWAYS_WRITE_UUID, request, response=self._write_response)
 
     async def _request(self, request: bytes, frame_type: int = TYPE_READ) -> bytes:
         # The reply has the request's type and key count: one entry per requested
@@ -261,8 +283,7 @@ class TenwaysBike:
         count = request[3]
         async with self._lock:
             client = self.client
-            if not self.supports_protocol():
-                raise TenwaysUnsupportedError("King Meter service not found")
+            self._check_supported()
             if not self._protocol_notify:
                 self._assembler.reset()
                 await client.start_notify(TENWAYS_NOTIFY_UUID, self._on_notify)
@@ -274,7 +295,7 @@ class TenwaysBike:
             try:
                 # The timeout covers the write too: a stalled write must not hold the lock.
                 async with asyncio.timeout(self.response_timeout):
-                    await client.write_gatt_char(TENWAYS_WRITE_UUID, request, response=False)
+                    await client.write_gatt_char(TENWAYS_WRITE_UUID, request, response=self._write_response)
                     return await future
             except TimeoutError as exc:
                 raise TenwaysTimeoutError(

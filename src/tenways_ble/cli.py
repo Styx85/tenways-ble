@@ -22,9 +22,11 @@ def _parser() -> argparse.ArgumentParser:
 
     status = sub.add_parser("status", help="Read live telemetry (King Meter status request)")
     status.add_argument("address")
+    status.add_argument("--model", help="advertised name, e.g. 'CGO800' (default: Longtail Duo)")
 
     device_info = sub.add_parser("device-info", help="Read firmware and serial number")
     device_info.add_argument("address")
+    device_info.add_argument("--model", help="advertised name, e.g. 'CGO800' (default: Longtail Duo)")
 
     listen = sub.add_parser("listen", help="Subscribe to raw TENWAYS notifications")
     listen.add_argument("address")
@@ -62,8 +64,8 @@ async def _info(address: str) -> int:
     return 0
 
 
-async def _status(address: str) -> int:
-    async with TenwaysBike(address) as bike:
+async def _status(address: str, model: str | None = None) -> int:
+    async with TenwaysBike(address, name=model) as bike:
         status = await bike.read_status()
     print(f"Traction battery: {status.battery_percent} %")
     print(f"Odometer: {status.odometer_km:.1f} km")
@@ -77,8 +79,8 @@ async def _status(address: str) -> int:
     return 0
 
 
-async def _device_info(address: str) -> int:
-    async with TenwaysBike(address) as bike:
+async def _device_info(address: str, model: str | None = None) -> int:
+    async with TenwaysBike(address, name=model) as bike:
         info = await bike.read_device_info()
     print(f"Firmware: {info.firmware or '<unknown>'}")
     print(f"Serial: {info.serial or '<unknown>'}")
@@ -123,9 +125,9 @@ async def _amain(args: argparse.Namespace) -> int:
     if args.command == "info":
         return await _info(args.address)
     if args.command == "status":
-        return await _status(args.address)
+        return await _status(args.address, args.model)
     if args.command == "device-info":
-        return await _device_info(args.address)
+        return await _device_info(args.address, args.model)
     if args.command == "listen":
         return await _listen(args.address)
     raise RuntimeError("Unhandled command")

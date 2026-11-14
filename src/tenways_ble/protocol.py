@@ -8,7 +8,9 @@ Frame layout (both directions)::
     [type][0x00][len][count][payload ...][crc_hi][crc_lo][0x45]
 
 ``type`` is 0x62 (read) or 0x63 (write), ``len`` counts count + payload, and
-``crc`` is CRC-16/MODBUS over type..payload, transmitted high byte first.
+``crc`` is CRC-16/MODBUS over type..payload, transmitted high byte first
+(the CGO800 driver of the app sends it low byte first; frames are accepted
+in either order).
 ``count`` is the number of keys: a read request lists ``count`` field keys,
 its reply carries ``count`` TLV entries ``[key][size][value]`` with
 big-endian values, and a write carries one TLV entry (count 1). It is not a
@@ -24,6 +26,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from .profiles import LONGTAIL_DUO, LONGTAIL_INFO, LONGTAIL_STATUS, Profile
+
 TYPE_READ = 0x62
 TYPE_WRITE = 0x63
 FRAME_TYPES = (TYPE_READ, TYPE_WRITE)
@@ -32,8 +36,9 @@ END_BYTE = 0x45
 OVERHEAD = 6  # type, 0x00, len, crc_hi, crc_lo, end
 MAX_FRAME = 0xFF + OVERHEAD
 
-INFO_KEYS = (0x04, 0x05, 0x4F, 0x70)
-STATUS_KEYS = (0x06, 0x07, 0x08, 0x09, 0x11, 0x0A, 0x0B, 0x0C, 0x0F, 0x23, 0x4F)
+# The Longtail Duo's requests; other models: see profiles.py.
+INFO_KEYS = LONGTAIL_INFO
+STATUS_KEYS = LONGTAIL_STATUS
 WRITE_COUNT = 1  # a write sets one key
 
 # Legacy names: the byte they name is the key count, not a command code.
@@ -44,7 +49,7 @@ CMD_CLOCK = WRITE_COUNT
 # Fields confirmed against the TENWAYS app; a reply without them is rejected.
 STATUS_REQUIRED = {0x07: 2, 0x08: 2, 0x09: 4, 0x0A: 4, 0x0C: 4, 0x0F: 1}
 # Plausible or unknown fields; absent or malformed values become None.
-STATUS_OPTIONAL = {0x06: 2, 0x0B: 2, 0x11: 1, 0x23: 2, 0x4F: 1}
+STATUS_OPTIONAL = {0x06: 2, 0x0B: 2, 0x11: 1, 0x12: 1, 0x23: 2, 0x4F: 1}
 
 
 class TenwaysProtocolError(ValueError):
@@ -60,17 +65,19 @@ def crc16_modbus(data: bytes) -> int:
     return crc
 
 
-def build_frame(frame_type: int, count: int, payload: bytes = b"") -> bytes:
+def build_frame(frame_type: int, count: int, payload: bytes = b"", *, crc_low_first: bool = False) -> bytes:
     """Frame ``payload`` (keys or TLV entries) with its key ``count``."""
     if frame_type not in FRAME_TYPES:
         raise ValueError(f"invalid frame type {frame_type:#04x}")
     if len(payload) + 1 > 0xFF:
         raise ValueError("payload too long")
     body = bytes((frame_type, HEADER_BYTE, len(payload) + 1, count)) + payload
-    return body + crc16_modbus(body).to_bytes(2, "big") + bytes((END_BYTE,))
+    return body + crc16_modbus(body).to_bytes(2, "little" if crc_low_first else "big") + bytes((END_BYTE,))
 
 
-def build_read_request(keys: tuple[int, ...] | int, legacy_keys: tuple[int, ...] | None = None) -> bytes:
+def build_read_request(
+    keys: tuple[int, ...] | int, legacy_keys: tuple[int, ...] | None = None, *, crc_low_first: bool = False,
+) -> bytes:
     """Read request for ``keys``; the count byte is ``len(keys)``.
 
     The old form ``build_read_request(cmd, keys)`` still works; ``cmd`` must
@@ -80,7 +87,7 @@ def build_read_request(keys: tuple[int, ...] | int, legacy_keys: tuple[int, ...]
         if keys != len(legacy_keys):
             raise ValueError(f"count {keys!r} does not match {len(legacy_keys)} keys")
         keys = legacy_keys
-    return build_frame(TYPE_READ, len(keys), bytes(keys))
+    return build_frame(TYPE_READ, len(keys), bytes(keys), crc_low_first=crc_low_first)
 
 
 KEY_CLOCK = 0x3C
@@ -89,7 +96,7 @@ KEY_CLOCK = 0x3C
 CLOCK_FLAGS = 0x02
 
 
-def build_clock_write(moment: datetime) -> bytes:
+def build_clock_write(moment: datetime, *, crc_low_first: bool = False) -> bytes:
     """Frame that sets the bike's clock to the wall-clock fields of ``moment``.
 
     Layout from a capture of the TENWAYS app: flags, year-2000, month, day,
@@ -102,14 +109,18 @@ def build_clock_write(moment: datetime) -> bytes:
         CLOCK_FLAGS, moment.year - 2000, moment.month, moment.day,
         moment.hour, moment.minute, moment.second,
     ))
-    return build_frame(TYPE_WRITE, WRITE_COUNT, bytes((KEY_CLOCK, len(value))) + value)
+    return build_frame(TYPE_WRITE, WRITE_COUNT, bytes((KEY_CLOCK, len(value))) + value, crc_low_first=crc_low_first)
 
 
 KEY_CLEAR_TRIP = 0x2D
 # The app's "clear trip" write: key 0x2D, one byte 0x01. Taken from the app's
 # driver for the Longtail Duo and confirmed on a Duo: trip distance, trip time,
 # maximum and average speed drop to 0, the odometer stays.
-CLEAR_TRIP_WRITE = build_frame(TYPE_WRITE, WRITE_COUNT, bytes((KEY_CLEAR_TRIP, 1, 0x01)))
+def build_clear_trip_write(*, crc_low_first: bool = False) -> bytes:
+    return build_frame(TYPE_WRITE, WRITE_COUNT, bytes((KEY_CLEAR_TRIP, 1, 0x01)), crc_low_first=crc_low_first)
+
+
+CLEAR_TRIP_WRITE = build_clear_trip_write()
 
 STATUS_REQUEST = build_read_request(STATUS_KEYS)
 INFO_REQUEST = build_read_request(INFO_KEYS)
@@ -139,7 +150,9 @@ def parse_frame(raw: bytes) -> Frame:
         raise TenwaysProtocolError("frame length mismatch")
     if raw[-1] != END_BYTE:
         raise TenwaysProtocolError("missing end byte")
-    if crc16_modbus(raw[:-3]) != int.from_bytes(raw[-3:-1], "big"):
+    # High byte first from the Longtail Duo; the CGO800 driver uses the other order.
+    crc = crc16_modbus(raw[:-3])
+    if crc not in (int.from_bytes(raw[-3:-1], "big"), int.from_bytes(raw[-3:-1], "little")):
         raise TenwaysProtocolError("CRC mismatch")
     return Frame(raw[0], raw[3], bytes(raw[4:-3]))
 
@@ -238,7 +251,7 @@ class FrameAssembler:
 
 @dataclass(frozen=True, slots=True)
 class TenwaysStatus:
-    """Telemetry from a status reply (eleven keys)."""
+    """Telemetry from a status reply."""
 
     battery_percent: int
     max_speed_kmh: float
@@ -251,6 +264,7 @@ class TenwaysStatus:
     # Raw values; see the light_on, remaining_range_km and power_w properties.
     raw_0b: int | None = None
     raw_11: int | None = None
+    raw_12: int | None = None  # assist level on the CGO009 (`boosterMode` in the app); not asked for on the Duo
     raw_23: int | None = None
     raw_4f: int | None = None
     fields: Mapping[int, bytes] = field(default_factory=dict, repr=False)
@@ -286,7 +300,7 @@ class TenwaysStatus:
 
 @dataclass(frozen=True, slots=True)
 class TenwaysDeviceInfo:
-    """Device information reply (four keys)."""
+    """Device information reply."""
 
     firmware: str | None
     serial: str | None
@@ -302,44 +316,68 @@ def _reply_fields(raw: bytes, count: int) -> dict[int, bytes]:
     return parse_tlv(frame.payload)
 
 
-def _number(fields: Mapping[int, bytes], key: int, size: int) -> int | None:
+def _number(fields: Mapping[int, bytes], key: int, size: int | None) -> int | None:
+    """Big-endian value of ``key``; ``size`` None accepts 1-4 bytes (untested models)."""
     value = fields.get(key)
-    if value is None or len(value) != size:
+    if value is None or not (len(value) == size if size else 1 <= len(value) <= 4):
         return None
     return int.from_bytes(value, "big")
 
 
-def decode_status(raw: bytes) -> TenwaysStatus:
-    fields = _reply_fields(raw, len(STATUS_KEYS))
-    for key, size in STATUS_REQUIRED.items():
-        if len(fields.get(key, b"")) != size:
+def decode_status(raw: bytes, profile: Profile = LONGTAIL_DUO) -> TenwaysStatus:
+    """Decode a status reply to ``profile``'s request.
+
+    Field sizes are checked strictly for the tested Longtail Duo; for untested
+    models any value of 1 to 4 bytes is taken.
+    """
+    fields = _reply_fields(raw, len(profile.status_keys))
+    strict = profile.tested
+    req = {key: _number(fields, key, size if strict else None) for key, size in STATUS_REQUIRED.items()}
+    for key, value in req.items():
+        if value is None:
             raise TenwaysProtocolError(f"missing or malformed status field {key:#04x}")
-    req = {key: int.from_bytes(fields[key], "big") for key in STATUS_REQUIRED}
     if req[0x0F] > 100:
         raise TenwaysProtocolError(f"battery out of range: {req[0x0F]}")
-    opt = {key: _number(fields, key, size) for key, size in STATUS_OPTIONAL.items()}
+    opt = {key: _number(fields, key, size if strict else None) for key, size in STATUS_OPTIONAL.items()}
     return TenwaysStatus(
         battery_percent=req[0x0F],
         max_speed_kmh=req[0x07] / 10,
         average_speed_kmh=req[0x08] / 10,
-        odometer_km=req[0x0C] / 10,
+        # The CGO800 reports whole km (per the app's driver).
+        odometer_km=float(req[0x0C]) if profile.cgo800_values else req[0x0C] / 10,
         ride_time_s=req[0x0A],
         trip_km=req[0x09] / 10,
         speed_kmh=opt[0x06] / 10 if opt[0x06] is not None else None,
         raw_0b=opt[0x0B],
         raw_11=opt[0x11],
+        raw_12=opt[0x12],
         raw_23=opt[0x23],
         raw_4f=opt[0x4F],
         fields=fields,
     )
 
 
-def decode_device_info(raw: bytes) -> TenwaysDeviceInfo:
-    fields = _reply_fields(raw, len(INFO_KEYS))
+def _ascii(value: bytes | None) -> str | None:
+    text = (value or b"").rstrip(b"\0").decode("ascii", "replace").strip()
+    return text or None
+
+
+def decode_device_info(raw: bytes, profile: Profile = LONGTAIL_DUO) -> TenwaysDeviceInfo:
+    """Decode an info reply to ``profile``'s request.
+
+    Firmware (key 0x04) is dotted bytes, on the CGO800 ASCII. The serial number
+    is key 0x70 where asked for, otherwise key 0x05 (the app's ``sn``).
+    """
+    fields = _reply_fields(raw, len(profile.info_keys))
     version = fields.get(0x04)
-    serial = fields.get(0x70, b"").rstrip(b"\0").decode("ascii", "replace")
+    if profile.cgo800_values:
+        firmware = _ascii(version)
+    elif version and (len(version) == 3 or not profile.tested):
+        firmware = ".".join(str(b) for b in version)
+    else:
+        firmware = None
     return TenwaysDeviceInfo(
-        firmware=".".join(str(b) for b in version) if version and len(version) == 3 else None,
-        serial=serial or None,
+        firmware=firmware,
+        serial=_ascii(fields.get(0x70)) or (None if profile.tested else _ascii(fields.get(0x05))),
         fields=fields,
     )

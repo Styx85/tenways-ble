@@ -4,14 +4,27 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tenways-ble"
-version = "0.5.0"
-description = "BLE client, King Meter protocol and diagnostic CLI for TENWAYS e-bikes (reads, plus the app's clock sync and clear trip)"
+version = "0.6.0"
+description = "BLE client, King Meter protocol and diagnostic CLI for TENWAYS e-bikes (Longtail Duo tested; reads, plus the app's clock sync and clear trip)"
 readme = "README.md"
 requires-python = ">=3.11"
 keywords = ["tenways", "ebike", "bluetooth", "ble", "king-meter", "home-assistant"]
 license = { text = "MIT" }
 authors = [
   { name = "Christoph Berliner" }
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: AsyncIO",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Home Automation",
+  "Topic :: System :: Hardware",
 ]
 dependencies = [
   "bleak>=0.22",
@@ -25,6 +38,7 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/Styx85/tenways-ble"
+Documentation = "https://github.com/Styx85/tenways-ble/blob/main/docs/PROTOCOL.md"
 Issues = "https://github.com/Styx85/tenways-ble/issues"
 
 [project.scripts]
