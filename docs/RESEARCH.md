@@ -124,8 +124,10 @@ Request keys per driver (agreeing with tenways-bridge's notes of app 2.18.0):
 | ago | `05 06 07 08 09 11 0A 0B 0C 0F 23` | `04 05` |
 
 Other per-model details: the CGO800 driver takes the odometer in whole km and
-the firmware as ASCII; the app writes with response to names ending in `_D`
-(and to the AGO AIR driver); a CGO800 that answers with `AT+…` text is retried
+the firmware as ASCII; the app writes with response only to names starting with
+`AGO AIR`, `CGO600_D`, `Wayfarer_B`, `CGO009_D`, `AGOX_D`, `AGOT_D`,
+`CGO COMPACT_D` or `AGO AIR-BELT_D` (all others without response, as captured
+on the Duo); a CGO800 that answers with `AT+…` text is retried
 with the encrypted session (seen on the CGO800 Plus).
 
 ### Read keys

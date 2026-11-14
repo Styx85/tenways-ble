@@ -131,7 +131,7 @@ async def test_cgo800_bike_sends_low_crc_requests():
     assert fake.responses == [False]
 
 
-async def test_names_ending_in_d_write_with_response():
+async def test_cgo009_d_writes_with_response():
     fake = RecordingClient(replies={})
     bike = TenwaysBike(fake, name="CGO009_D", response_timeout=0.05)
     with pytest.raises(TimeoutError):
@@ -141,6 +141,10 @@ async def test_names_ending_in_d_write_with_response():
     with pytest.raises(TimeoutError):
         await TenwaysBike(fake, response_timeout=0.05).reset_trip()
     assert fake.responses == [False]  # the Longtail Duo, as captured
+    fake = RecordingClient(replies={})
+    with pytest.raises(TimeoutError):
+        await TenwaysBike(fake, name="Longtail Duo_D", response_timeout=0.05).reset_trip()
+    assert fake.responses == [False]  # not in the app's with-response list
 
 
 async def test_unsupported_model_sends_nothing():

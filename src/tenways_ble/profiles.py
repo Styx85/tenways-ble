@@ -39,7 +39,15 @@ LONGTAIL_STATUS = (0x06, 0x07, 0x08, 0x09, 0x11, 0x0A, 0x0B, 0x0C, 0x0F, 0x23, 0
 LONGTAIL_INFO = (0x04, 0x05, 0x4F, 0x70)
 
 LONGTAIL_DUO = Profile("Longtail Duo", LONGTAIL_STATUS, LONGTAIL_INFO, tested=True)
-# Same driver as the Longtail Duo; the app writes to models ending in "_D" with response.
+# Names the app writes to with response (2.19.0); all others use write without response,
+# as captured on the Longtail Duo. Of these, only CGO009_D has a supported profile.
+WRITE_WITH_RESPONSE_NAMES = (
+    "AGO AIR", "CGO600_D", "Wayfarer_B", "CGO009_D", "AGOX_D", "AGOT_D", "CGO COMPACT_D", "AGO AIR-BELT_D",
+)
+# Names the app sends the clock (key 0x3C) to after connecting.
+CLOCK_NAMES = ("AGOX", "AGOT", "CARGO", "Longtail Duo")
+
+# Same driver as the Longtail Duo; the app writes to it with response.
 CGO009_D = Profile("CGO009_D", LONGTAIL_STATUS, LONGTAIL_INFO, write_with_response=True)
 CGO009 = Profile(
     "CGO009",

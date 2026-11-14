@@ -113,8 +113,8 @@ class TenwaysBike:
         profile: Profile | None = None,
     ) -> None:
         self.profile = profile or (profile_for(name) if name else LONGTAIL_DUO)
-        # The app writes with response for this driver and for every name ending in "_D".
-        self._write_response = self.profile.write_with_response or bool(name and name.endswith("_D"))
+        # The app writes with response only for the names in profiles.WRITE_WITH_RESPONSE_NAMES.
+        self._write_response = self.profile.write_with_response
         self.timeout = timeout
         self.response_timeout = response_timeout
         self._owns_client = not isinstance(address_or_device, BleakClient)
@@ -241,6 +241,8 @@ class TenwaysBike:
     async def set_clock(self, moment: datetime | None = None, *, wait_for_reply: bool = True) -> None:
         """Set the bike's clock (a write, sent only when called).
 
+        The app sends this to names starting with AGOX, AGOT, CARGO and Longtail
+        Duo (confirmed on a Longtail Duo); for other models it is untested.
         ``moment`` is sent as wall-clock fields and defaults to the local time of
         this machine; the bike has no time zone or daylight saving. Raises
         :class:`TenwaysTimeoutError` if ``wait_for_reply`` and no acknowledgement
