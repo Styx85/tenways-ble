@@ -89,7 +89,9 @@ Status request (11 keys, so `COUNT 0x0B`), as sent by the app: `62 00 0c 0b 06 0
 
 Device info request (`COUNT 0x04`, keys `04 05 4f 70`): key `0x04` holds three version bytes (`2.20.16` observed; the app shows `1.4.0` elsewhere, so this may be another component), key `0x70` the ASCII serial number.
 
-The app also writes a clock sync (`TYPE 0x63`, `COUNT 0x01`, key `0x3C`, value: flags `0x02`, year−2000, month, day, hour, minute, second). `TenwaysBike.set_clock()` sends the same frame; it is the **only write** this library implements, it is never sent on its own, and it is **not yet confirmed on a bike**: the frame is checked against the capture byte for byte, but whether the bike takes it as local time, what the flags byte means and what the acknowledgement looks like is open. The bike has no time zone or daylight saving, so it needs setting again after each change.
+The app also writes a clock sync (`TYPE 0x63`, `COUNT 0x01`, key `0x3C`, value: flags `0x02`, year−2000, month, day, hour, minute, second). `TenwaysBike.set_clock()` sends the same frame; it is the **only write** this library implements and it is never sent on its own.
+
+**Confirmed on a Longtail Duo** (via the Home Assistant integration, November 2026): the bike takes the fields as local wall-clock time; after the write the display changed from summer time to the correct local time to the minute, and nothing else changed. The bike answered with a reply of the same type and key count that passed the length and CRC checks, which is what `set_clock()` waits for. Still open: what the flags byte means (`0x02` is what the app sends and what works) and what the reply's payload contains. The bike has no time zone or daylight saving, so it needs setting again after each change.
 
 ## Install for development
 
