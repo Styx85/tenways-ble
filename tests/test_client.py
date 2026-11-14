@@ -98,7 +98,7 @@ async def test_corrupted_reply_is_not_accepted():
         await bike.read_status()
 
 
-async def test_reply_for_other_command_is_ignored():
+async def test_reply_with_other_key_count_is_ignored():
     bike = TenwaysBike(FakeClient(replies={STATUS_REQUEST: INFO_REPLY}), response_timeout=0.05)
     with pytest.raises(TenwaysTimeoutError):
         await bike.read_status()

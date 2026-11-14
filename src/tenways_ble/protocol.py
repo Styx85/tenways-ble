@@ -5,15 +5,17 @@ derived from an Android HCI capture of the official TENWAYS app.
 
 Frame layout (both directions)::
 
-    [type][0x00][len][cmd][payload ...][crc_hi][crc_lo][0x45]
+    [type][0x00][len][count][payload ...][crc_hi][crc_lo][0x45]
 
-``type`` is 0x62 (read) or 0x63 (write), ``len`` counts cmd + payload, and
+``type`` is 0x62 (read) or 0x63 (write), ``len`` counts count + payload, and
 ``crc`` is CRC-16/MODBUS over type..payload, transmitted high byte first.
-A read request lists field keys; the reply carries TLV entries
-``[key][size][value]`` with big-endian values.
+``count`` is the number of keys: a read request lists ``count`` field keys,
+its reply carries ``count`` TLV entries ``[key][size][value]`` with
+big-endian values, and a write carries one TLV entry (count 1). It is not a
+command code: the status request is 0x0B because it asks for eleven keys.
 
-Only read requests are built. Write commands (0x63) are parsed but never
-generated.
+Read requests and the clock write (:func:`build_clock_write`) are built;
+nothing else is ever generated.
 """
 from __future__ import annotations
 
@@ -29,12 +31,14 @@ END_BYTE = 0x45
 OVERHEAD = 6  # type, 0x00, len, crc_hi, crc_lo, end
 MAX_FRAME = 0xFF + OVERHEAD
 
-CMD_INFO = 0x04
-CMD_STATUS = 0x0B
-CMD_CLOCK = 0x01  # write command; the only write this library knows
-
 INFO_KEYS = (0x04, 0x05, 0x4F, 0x70)
 STATUS_KEYS = (0x06, 0x07, 0x08, 0x09, 0x11, 0x0A, 0x0B, 0x0C, 0x0F, 0x23, 0x4F)
+WRITE_COUNT = 1  # a write sets one key
+
+# Legacy names: the byte they name is the key count, not a command code.
+CMD_INFO = len(INFO_KEYS)
+CMD_STATUS = len(STATUS_KEYS)
+CMD_CLOCK = WRITE_COUNT
 
 # Fields confirmed against the TENWAYS app; a reply without them is rejected.
 STATUS_REQUIRED = {0x07: 2, 0x08: 2, 0x09: 4, 0x0A: 4, 0x0C: 4, 0x0F: 1}
@@ -55,17 +59,27 @@ def crc16_modbus(data: bytes) -> int:
     return crc
 
 
-def build_frame(frame_type: int, cmd: int, payload: bytes = b"") -> bytes:
+def build_frame(frame_type: int, count: int, payload: bytes = b"") -> bytes:
+    """Frame ``payload`` (keys or TLV entries) with its key ``count``."""
     if frame_type not in FRAME_TYPES:
         raise ValueError(f"invalid frame type {frame_type:#04x}")
     if len(payload) + 1 > 0xFF:
         raise ValueError("payload too long")
-    body = bytes((frame_type, HEADER_BYTE, len(payload) + 1, cmd)) + payload
+    body = bytes((frame_type, HEADER_BYTE, len(payload) + 1, count)) + payload
     return body + crc16_modbus(body).to_bytes(2, "big") + bytes((END_BYTE,))
 
 
-def build_read_request(cmd: int, keys: tuple[int, ...]) -> bytes:
-    return build_frame(TYPE_READ, cmd, bytes(keys))
+def build_read_request(keys: tuple[int, ...] | int, legacy_keys: tuple[int, ...] | None = None) -> bytes:
+    """Read request for ``keys``; the count byte is ``len(keys)``.
+
+    The old form ``build_read_request(cmd, keys)`` still works; ``cmd`` must
+    then equal ``len(keys)``.
+    """
+    if legacy_keys is not None:
+        if keys != len(legacy_keys):
+            raise ValueError(f"count {keys!r} does not match {len(legacy_keys)} keys")
+        keys = legacy_keys
+    return build_frame(TYPE_READ, len(keys), bytes(keys))
 
 
 KEY_CLOCK = 0x3C
@@ -87,18 +101,23 @@ def build_clock_write(moment: datetime) -> bytes:
         CLOCK_FLAGS, moment.year - 2000, moment.month, moment.day,
         moment.hour, moment.minute, moment.second,
     ))
-    return build_frame(TYPE_WRITE, CMD_CLOCK, bytes((KEY_CLOCK, len(value))) + value)
+    return build_frame(TYPE_WRITE, WRITE_COUNT, bytes((KEY_CLOCK, len(value))) + value)
 
 
-STATUS_REQUEST = build_read_request(CMD_STATUS, STATUS_KEYS)
-INFO_REQUEST = build_read_request(CMD_INFO, INFO_KEYS)
+STATUS_REQUEST = build_read_request(STATUS_KEYS)
+INFO_REQUEST = build_read_request(INFO_KEYS)
 
 
 @dataclass(frozen=True, slots=True)
 class Frame:
     type: int
-    cmd: int
+    count: int  # number of keys or TLV entries
     payload: bytes
+
+    @property
+    def cmd(self) -> int:
+        """Legacy alias of :attr:`count`."""
+        return self.count
 
 
 def parse_frame(raw: bytes) -> Frame:
@@ -212,7 +231,7 @@ class FrameAssembler:
 
 @dataclass(frozen=True, slots=True)
 class TenwaysStatus:
-    """Telemetry from a status reply (command 0x0B)."""
+    """Telemetry from a status reply (eleven keys)."""
 
     battery_percent: int
     max_speed_kmh: float
@@ -260,19 +279,19 @@ class TenwaysStatus:
 
 @dataclass(frozen=True, slots=True)
 class TenwaysDeviceInfo:
-    """Device information reply (command 0x04)."""
+    """Device information reply (four keys)."""
 
     firmware: str | None
     serial: str | None
     fields: Mapping[int, bytes] = field(default_factory=dict, repr=False)
 
 
-def _reply_fields(raw: bytes, cmd: int) -> dict[int, bytes]:
+def _reply_fields(raw: bytes, count: int) -> dict[int, bytes]:
     frame = parse_frame(raw)
     if frame.type != TYPE_READ:
         raise TenwaysProtocolError(f"unexpected frame type {frame.type:#04x}")
-    if frame.cmd != cmd:
-        raise TenwaysProtocolError(f"unexpected command {frame.cmd:#04x}")
+    if frame.count != count:
+        raise TenwaysProtocolError(f"unexpected key count {frame.count}, expected {count}")
     return parse_tlv(frame.payload)
 
 
@@ -284,7 +303,7 @@ def _number(fields: Mapping[int, bytes], key: int, size: int) -> int | None:
 
 
 def decode_status(raw: bytes) -> TenwaysStatus:
-    fields = _reply_fields(raw, CMD_STATUS)
+    fields = _reply_fields(raw, len(STATUS_KEYS))
     for key, size in STATUS_REQUIRED.items():
         if len(fields.get(key, b"")) != size:
             raise TenwaysProtocolError(f"missing or malformed status field {key:#04x}")
@@ -309,7 +328,7 @@ def decode_status(raw: bytes) -> TenwaysStatus:
 
 
 def decode_device_info(raw: bytes) -> TenwaysDeviceInfo:
-    fields = _reply_fields(raw, CMD_INFO)
+    fields = _reply_fields(raw, len(INFO_KEYS))
     version = fields.get(0x04)
     serial = fields.get(0x70, b"").rstrip(b"\0").decode("ascii", "replace")
     return TenwaysDeviceInfo(
