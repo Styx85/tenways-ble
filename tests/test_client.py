@@ -14,7 +14,7 @@ from tenways_ble import (
 )
 from tenways_ble.const import TENWAYS_NOTIFY_UUID, TENWAYS_WRITE_UUID
 
-from .frames import CLOCK_REPLY, CLOCK_WRITE, INFO_REPLY, INFO_REQUEST, STATUS_REPLY, STATUS_REQUEST
+from .frames import CLEAR_TRIP_REPLY, CLEAR_TRIP_WRITE, CLOCK_REPLY, CLOCK_WRITE, INFO_REPLY, INFO_REQUEST, STATUS_REPLY, STATUS_REQUEST
 
 
 class FakeClient(BleakClient):
@@ -222,3 +222,32 @@ async def test_status_reply_does_not_satisfy_a_clock_write():
     fake = FakeClient(replies={CLOCK_WRITE: STATUS_REPLY})
     with pytest.raises(TenwaysTimeoutError):
         await TenwaysBike(fake, response_timeout=0.05).set_clock(datetime(2026, 10, 18, 14, 32, 18))
+
+
+async def test_reset_trip_writes_the_app_frame_and_accepts_the_echo():
+    fake = FakeClient(replies={CLEAR_TRIP_WRITE: CLEAR_TRIP_REPLY})
+    await TenwaysBike(fake).reset_trip()
+    assert fake.writes == [CLEAR_TRIP_WRITE]
+
+
+async def test_reset_trip_without_reply_times_out():
+    with pytest.raises(TenwaysTimeoutError):
+        await TenwaysBike(FakeClient(replies={}), response_timeout=0.05).reset_trip()
+
+
+async def test_reset_trip_can_skip_waiting_for_the_reply():
+    fake = FakeClient(replies={})
+    await TenwaysBike(fake).reset_trip(wait_for_reply=False)
+    assert fake.writes == [CLEAR_TRIP_WRITE]
+
+
+async def test_acknowledgement_for_another_key_is_rejected():
+    # A one-key write acknowledgement for the clock is not the one for clearing the trip.
+    fake = FakeClient(replies={CLEAR_TRIP_WRITE: CLOCK_REPLY})
+    with pytest.raises(TenwaysProtocolError, match="0x2d"):
+        await TenwaysBike(fake, response_timeout=0.05).reset_trip()
+
+
+async def test_reset_trip_needs_the_king_meter_service():
+    with pytest.raises(TenwaysUnsupportedError):
+        await TenwaysBike(FakeClient(has_service=False)).reset_trip()

@@ -20,6 +20,7 @@ from .const import (
 )
 from .models import TenwaysAdvertisement, TenwaysInfo
 from .protocol import (
+    CLEAR_TRIP_WRITE,
     INFO_REQUEST,
     STATUS_REQUEST,
     TYPE_READ,
@@ -94,8 +95,8 @@ class TenwaysBike:
     or an already connected ``BleakClient`` (e.g. from bleak-retry-connector)
     to only speak the protocol over it; the caller then owns the connection.
 
-    Only read requests are sent, plus the clock write when :meth:`set_clock`
-    is called.
+    Only read requests are sent, plus a write when :meth:`set_clock` or
+    :meth:`reset_trip` is called.
     """
 
     def __init__(
@@ -223,17 +224,33 @@ class TenwaysBike:
         return decode_device_info(await self._request(INFO_REQUEST))
 
     async def set_clock(self, moment: datetime | None = None, *, wait_for_reply: bool = True) -> None:
-        """Set the bike's clock (a write; the only one this library sends).
+        """Set the bike's clock (a write, sent only when called).
 
         ``moment`` is sent as wall-clock fields and defaults to the local time of
         this machine; the bike has no time zone or daylight saving. Raises
         :class:`TenwaysTimeoutError` if ``wait_for_reply`` and the bike does not
         acknowledge; the clock may still have been set.
         """
+        await self._write(build_clock_write(moment if moment is not None else datetime.now()), wait_for_reply)
 
-        request = build_clock_write(moment if moment is not None else datetime.now())
+    async def reset_trip(self, *, wait_for_reply: bool = True) -> None:
+        """Clear the trip (a write, sent only when called).
+
+        Trip distance, trip time, maximum and average speed drop to 0; the
+        odometer stays. The bike acknowledges by echoing the frame. Raises
+        :class:`TenwaysTimeoutError` if ``wait_for_reply`` and the bike does not
+        acknowledge; the trip may still have been cleared.
+        """
+        await self._write(CLEAR_TRIP_WRITE, wait_for_reply)
+
+    async def _write(self, request: bytes, wait_for_reply: bool) -> None:
         if wait_for_reply:
-            await self._request(request, TYPE_WRITE)
+            reply = parse_frame(await self._request(request, TYPE_WRITE))
+            # The acknowledgement carries the written key first (clock and clear trip both do).
+            if not reply.payload or reply.payload[0] != request[4]:
+                raise TenwaysProtocolError(
+                    f"acknowledgement for key {reply.payload[:1].hex() or 'none'}, expected {request[4]:#04x}"
+                )
             return
         async with self._lock:
             if not self.supports_protocol():
