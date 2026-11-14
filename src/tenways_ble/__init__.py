@@ -7,7 +7,7 @@ from .client import (
     scan_tenways,
 )
 from .models import TenwaysAdvertisement, TenwaysInfo
-from .protocol import TenwaysDeviceInfo, TenwaysProtocolError, TenwaysStatus, build_clock_write
+from .protocol import CLEAR_TRIP_WRITE, TenwaysDeviceInfo, TenwaysProtocolError, TenwaysStatus, build_clock_write
 
 __all__ = [
     "TenwaysAdvertisement",
@@ -20,6 +20,7 @@ __all__ = [
     "TenwaysStatus",
     "TenwaysTimeoutError",
     "TenwaysUnsupportedError",
+    "CLEAR_TRIP_WRITE",
     "build_clock_write",
     "scan_tenways",
 ]

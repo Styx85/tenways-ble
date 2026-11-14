@@ -171,7 +171,7 @@ only reads `0x11`. Its "auto light on" belongs to the helmet. A light write on
 
 - **Clear trip works.** The bike echoed `63 00 04 01 2d 01 01 63 e8 45`. Before: trip 164.0 km, trip time 42970 s, maximum 44.7, average 13.7 km/h. After: all four 0; odometer 164.0 km and battery unchanged. This also confirms on the bike that `0x09` is the trip and `0x0C` the odometer. `TenwaysBike.reset_trip()` sends this frame.
 - **`0x12` (assist level) is not available** on the Duo: the reply is `62 00 01 01 cc df 45`, a count of 1 with no entry.
-- **Unknown keys get an empty reply**, not silence and not an error.
+- A key the display does not know (seen once, for `0x12`) gets an empty reply, not silence and not an error.
 
 ## Standard battery characteristic (`0x2A19`)
 

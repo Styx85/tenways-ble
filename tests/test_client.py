@@ -241,10 +241,18 @@ async def test_reset_trip_can_skip_waiting_for_the_reply():
     assert fake.writes == [CLEAR_TRIP_WRITE]
 
 
-async def test_acknowledgement_for_another_key_is_rejected():
+async def test_acknowledgement_for_another_key_is_ignored():
     # A one-key write acknowledgement for the clock is not the one for clearing the trip.
     fake = FakeClient(replies={CLEAR_TRIP_WRITE: CLOCK_REPLY})
-    with pytest.raises(TenwaysProtocolError, match="0x2d"):
+    with pytest.raises(TenwaysTimeoutError):
+        await TenwaysBike(fake, response_timeout=0.05).reset_trip()
+
+
+async def test_empty_write_acknowledgement_is_ignored():
+    from tenways_ble.protocol import TYPE_WRITE, build_frame
+
+    fake = FakeClient(replies={CLEAR_TRIP_WRITE: build_frame(TYPE_WRITE, 1, b"")})
+    with pytest.raises(TenwaysTimeoutError):
         await TenwaysBike(fake, response_timeout=0.05).reset_trip()
 
 

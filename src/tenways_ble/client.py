@@ -113,7 +113,8 @@ class TenwaysBike:
         self._client: BleakClient | None = None if self._owns_client else address_or_device
         self._lock = asyncio.Lock()
         self._assembler = FrameAssembler()
-        self._pending: tuple[int, int, asyncio.Future[bytes]] | None = None  # frame type, key count, reply
+        # frame type, key count, written key (writes only), reply
+        self._pending: tuple[int, int, int | None, asyncio.Future[bytes]] | None = None
         self._protocol_notify = False
         self._raw_callback: NotificationCallback | None = None
         self._callback_tasks: set[asyncio.Future[Any]] = set()
@@ -168,8 +169,8 @@ class TenwaysBike:
 
     def _on_disconnect(self, _client: BleakClient) -> None:
         self._protocol_notify = False
-        if self._pending is not None and not self._pending[2].done():
-            self._pending[2].set_exception(TenwaysError("Bike disconnected"))
+        if self._pending is not None and not self._pending[3].done():
+            self._pending[3].set_exception(TenwaysError("Bike disconnected"))
 
     async def battery_level(self) -> int:
         """Read the Bluetooth standard Battery Level characteristic.
@@ -228,8 +229,8 @@ class TenwaysBike:
 
         ``moment`` is sent as wall-clock fields and defaults to the local time of
         this machine; the bike has no time zone or daylight saving. Raises
-        :class:`TenwaysTimeoutError` if ``wait_for_reply`` and the bike does not
-        acknowledge; the clock may still have been set.
+        :class:`TenwaysTimeoutError` if ``wait_for_reply`` and no acknowledgement
+        carrying key 0x3C arrives; the clock may still have been set.
         """
         await self._write(build_clock_write(moment if moment is not None else datetime.now()), wait_for_reply)
 
@@ -238,19 +239,14 @@ class TenwaysBike:
 
         Trip distance, trip time, maximum and average speed drop to 0; the
         odometer stays. The bike acknowledges by echoing the frame. Raises
-        :class:`TenwaysTimeoutError` if ``wait_for_reply`` and the bike does not
-        acknowledge; the trip may still have been cleared.
+        :class:`TenwaysTimeoutError` if ``wait_for_reply`` and no acknowledgement
+        carrying key 0x2D arrives; the trip may still have been cleared.
         """
         await self._write(CLEAR_TRIP_WRITE, wait_for_reply)
 
     async def _write(self, request: bytes, wait_for_reply: bool) -> None:
         if wait_for_reply:
-            reply = parse_frame(await self._request(request, TYPE_WRITE))
-            # The acknowledgement carries the written key first (clock and clear trip both do).
-            if not reply.payload or reply.payload[0] != request[4]:
-                raise TenwaysProtocolError(
-                    f"acknowledgement for key {reply.payload[:1].hex() or 'none'}, expected {request[4]:#04x}"
-                )
+            await self._request(request, TYPE_WRITE)
             return
         async with self._lock:
             if not self.supports_protocol():
@@ -272,7 +268,9 @@ class TenwaysBike:
                 await client.start_notify(TENWAYS_NOTIFY_UUID, self._on_notify)
                 self._protocol_notify = True
             future: asyncio.Future[bytes] = asyncio.get_running_loop().create_future()
-            self._pending = (frame_type, count, future)
+            # A write's acknowledgement carries the written key first (clock and clear trip both do).
+            key = request[4] if frame_type == TYPE_WRITE else None
+            self._pending = (frame_type, count, key, future)
             try:
                 # The timeout covers the write too: a stalled write must not hold the lock.
                 async with asyncio.timeout(self.response_timeout):
@@ -304,9 +302,10 @@ class TenwaysBike:
                 _LOGGER.debug("Dropping invalid frame %s: %s", raw.hex(" "), exc)
                 continue
             pending = self._pending
-            if (pending is not None and not pending[2].done()
-                    and frame.type == pending[0] and frame.count == pending[1]):
-                pending[2].set_result(raw)
+            if (pending is not None and not pending[3].done()
+                    and frame.type == pending[0] and frame.count == pending[1]
+                    and (pending[2] is None or frame.payload[:1] == bytes((pending[2],)))):
+                pending[3].set_result(raw)
             else:
                 _LOGGER.debug("Unsolicited frame %s", raw.hex(" "))
 

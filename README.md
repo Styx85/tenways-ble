@@ -91,11 +91,11 @@ Device info request (`COUNT 0x04`, keys `04 05 4f 70`): key `0x04` holds three v
 
 The app also writes a clock sync (`TYPE 0x63`, `COUNT 0x01`, key `0x3C`, value: flags `0x02`, year−2000, month, day, hour, minute, second). `TenwaysBike.set_clock()` sends the same frame; it is never sent on its own.
 
-**Confirmed on a Longtail Duo** (via the Home Assistant integration, November 2026): the bike takes the fields as local wall-clock time; after the write the display changed from summer time to the correct local time to the minute, and nothing else changed. The bike answered with a reply of the same type and key count that passed the length and CRC checks, which is what `set_clock()` waits for. Still open: what the flags byte means (`0x02` is what the app sends and what works) and what the reply's payload contains. The bike has no time zone or daylight saving, so it needs setting again after each change.
+**Confirmed on a Longtail Duo** (via the Home Assistant integration, November 2026): the bike takes the fields as local wall-clock time; after the write the display changed from summer time to the correct local time to the minute, and nothing else changed. The bike answers with a write frame whose payload starts with the key `0x3C`, followed by a shortened echo (its TLV says 7 bytes but carries 6); `set_clock()` waits for a reply of this type, key count and key. Still open: what the flags byte means (`0x02` is what the app sends and what works). The bike has no time zone or daylight saving, so it needs setting again after each change.
 
 Clearing the trip is the app's write `63 00 04 01 2d 01 01 63 e8 45` (key `0x2D`, value `0x01`), which the app's driver for the Longtail Duo has built in although its screen does not offer it for this bike. `TenwaysBike.reset_trip()` sends it, only when called. **Confirmed on a Longtail Duo** (November 2026): the bike echoes the frame as acknowledgement; trip distance (`0x09`), trip time (`0x0A`), maximum (`0x07`) and average speed (`0x08`) drop to 0, the odometer (`0x0C`) stays.
 
-Both writes wait for the acknowledgement, which must carry the written key; pass `wait_for_reply=False` to only send.
+Both writes wait for an acknowledgement that carries the written key (other frames are ignored); pass `wait_for_reply=False` to only send.
 
 ## Install for development
 
