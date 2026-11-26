@@ -56,7 +56,7 @@ Status request (11 keys, so `COUNT 0x0B`), as sent by the app: `62 00 0c 0b 06 0
 | `0x23` | 2 | power (`power` in the app, values above 3000 ignored), probably motor W | 0 while parked, unconfirmed riding |
 | `0x4F` | 1 | unknown | open |
 
-Device info request (`COUNT 0x04`, keys `04 05 4f 70`): key `0x04` holds three version bytes (`2.20.16` observed; the app shows `1.4.0` elsewhere, so this may be another component), key `0x70` the ASCII serial number.
+Device info request (`COUNT 0x04`, keys `04 05 4f 70`): key `0x04` holds three version bytes, which the TENWAYS app stores as `meterFWVer` (the display's firmware) and formats as decimal numbers joined by dots (`02 14 10` → `2.20.16` observed), key `0x70` the ASCII serial number.
 
 The app also writes a clock sync (`TYPE 0x63`, `COUNT 0x01`, key `0x3C`, value: flags `0x02`, year−2000, month, day, hour, minute, second). `TenwaysBike.set_clock()` sends the same frame; it is never sent on its own.
 
